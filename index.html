@@ -1,0 +1,546 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>UHECR.com — Ultra-High-Energy Cosmic Rays</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #000; overflow: hidden; }
+    canvas { display: block; }
+    #ui {
+      position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+      pointer-events: none;
+      font-family: 'Helvetica Neue', Arial, sans-serif;
+    }
+    #site-title {
+      position: absolute; top: 22px; left: 50%;
+      transform: translateX(-50%);
+      text-align: center;
+    }
+    #site-title h1 {
+      font-size: clamp(2rem, 5vw, 3.8rem);
+      font-weight: 100;
+      letter-spacing: 0.55em;
+      color: #fff;
+      text-shadow: 0 0 40px rgba(80,160,255,0.9), 0 0 80px rgba(40,100,200,0.4);
+    }
+    #site-title p {
+      font-size: clamp(0.65rem, 1.4vw, 0.95rem);
+      color: rgba(140,200,255,0.65);
+      letter-spacing: 0.3em;
+      text-transform: uppercase;
+      margin-top: 8px;
+    }
+    #tagline {
+      position: absolute; bottom: 24px; left: 50%;
+      transform: translateX(-50%);
+      text-align: center;
+      color: rgba(120,180,255,0.45);
+      font-size: clamp(0.6rem, 1.1vw, 0.8rem);
+      letter-spacing: 0.18em;
+      white-space: nowrap;
+    }
+  </style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="ui">
+  <div id="site-title">
+    <h1>UHECR</h1>
+    <p>Ultra-High-Energy Cosmic Rays</p>
+  </div>
+  <div id="tagline">Knowledge base for the highest-energy particles in the universe &mdash; coming soon</div>
+</div>
+<script>
+(function () {
+  'use strict';
+
+  const canvas = document.getElementById('c');
+  const ctx    = canvas.getContext('2d');
+
+  // ── Timing (seconds) ─────────────────────────────────────────────────────
+  const CYCLE       = 13;
+  const T_UHECR_0   = 1.2;
+  const T_UHECR_1   = 2.9;   // UHECR reaches first-interaction point
+  const T_FLASH_END = 3.5;
+  const T_SHOWER_0  = 3.2;
+  const T_SHOWER_1  = 6.2;
+  const T_DET_0     = 5.8;
+  const T_DET_1     = 7.4;
+  const T_FADE_0    = 10.5;
+  const T_FADE_1    = 12.8;
+
+  // ── State ─────────────────────────────────────────────────────────────────
+  let W, H, geo, showerTracks, stars, detectors;
+  let startTs = null;
+
+  // ── Helpers ───────────────────────────────────────────────────────────────
+  const clamp  = (v, lo, hi) => v < lo ? lo : v > hi ? hi : v;
+  const phase  = (t, a, b) => clamp((t - a) / (b - a), 0, 1);
+  const lerp   = (a, b, t) => a + (b - a) * t;
+  const ease   = t => t < 0.5 ? 2*t*t : -1 + (4-2*t)*t;
+
+  // ── Geometry setup ────────────────────────────────────────────────────────
+  function setupGeo() {
+    W = canvas.width  = window.innerWidth;
+    H = canvas.height = window.innerHeight;
+
+    // Shower zenith angle ~38° from vertical
+    const THETA = 38 * Math.PI / 180;
+    const udx = -Math.sin(THETA);   // ≈ -0.616  (going left)
+    const udy =  Math.cos(THETA);   // ≈  0.788  (going down)
+    // Perpendicular to shower axis (for transverse spread)
+    const pdx =  udy;
+    const pdy = -udx;
+
+    // First-interaction point (upper atmosphere)
+    const ix = W * 0.60;
+    const iy = H * 0.22;
+
+    // UHECR origin: back-track 280px along shower axis from interaction pt
+    const BACK = Math.min(H * 0.26, 300);
+    const ox = ix - udx * BACK;
+    const oy = iy - udy * BACK;
+
+    // Earth surface y
+    const earthY = H * 0.83;
+
+    // Distance along shower axis from interaction to ground
+    const sGround = (earthY - iy) / udy;
+
+    // Ground hit x
+    const groundX = ix + udx * sGround;
+
+    geo = { ix, iy, ox, oy, udx, udy, pdx, pdy, earthY, sGround, groundX, BACK };
+  }
+
+  // ── Stars ─────────────────────────────────────────────────────────────────
+  function buildStars() {
+    const count = Math.floor(W * H / 4500);
+    stars = Array.from({ length: count }, () => ({
+      x: Math.random() * W,
+      y: Math.random() * H * 0.28,
+      r: Math.random() * 1.3 + 0.25,
+      ph: Math.random() * Math.PI * 2,
+      sp: 0.6 + Math.random() * 1.8,
+    }));
+  }
+
+  // ── Shower tracks ─────────────────────────────────────────────────────────
+  function buildShower() {
+    const { ix, iy, udx, udy, pdx, pdy, sGround } = geo;
+    const N = 200;
+    showerTracks = [];
+
+    for (let i = 0; i < N; i++) {
+      const isMuon = Math.random() < 0.28;
+
+      // Start depth along shower axis (particles are created in cascade)
+      const s0 = sGround * (0.02 + Math.random() * (isMuon ? 0.25 : 0.30));
+
+      // End depth: muons reach ground, EM particles attenuate earlier
+      const maxEnd = isMuon
+        ? sGround * (0.92 + Math.random() * 0.08)
+        : sGround * (0.55 + Math.random() * 0.38);
+      const s1 = Math.max(s0 + sGround * 0.05, maxEnd);
+
+      // Transverse spread widens with depth
+      // Cone half-angle: EM ~5°, muons ~2° (muons are more forward)
+      const coneAngle = (isMuon ? 3 : 6) * Math.PI / 180;
+      const maxSpread = sGround * Math.tan(coneAngle);
+      const r0 = (Math.random() - 0.5) * 2 * maxSpread * (s0 / sGround);
+      const r1 = (Math.random() - 0.5) * 2 * maxSpread * (s1 / sGround);
+
+      const x1 = ix + udx * s0 + pdx * r0;
+      const y1 = iy + udy * s0 + pdy * r0;
+      const x2 = ix + udx * s1 + pdx * r1;
+      const y2 = iy + udy * s1 + pdy * r1;
+
+      // Colors
+      let hue, sat, light, alpha;
+      if (isMuon) {
+        hue   = 15 + Math.random() * 25;
+        sat   = 100;
+        light = 60 + Math.random() * 20;
+        alpha = 0.55 + Math.random() * 0.3;
+      } else {
+        hue   = 195 + Math.random() * 45;
+        sat   = 90 + Math.random() * 10;
+        light = 70 + Math.random() * 20;
+        alpha = 0.25 + Math.random() * 0.45;
+      }
+
+      showerTracks.push({
+        x1, y1, x2, y2, s0, s1, sGround,
+        color: `hsl(${hue},${sat}%,${light}%)`,
+        alpha,
+        width: isMuon ? 1.4 + Math.random() * 0.4 : 0.6 + Math.random() * 0.6,
+        isMuon,
+      });
+    }
+  }
+
+  // ── Detectors ─────────────────────────────────────────────────────────────
+  function buildDetectors() {
+    const { earthY, groundX } = geo;
+    const spacing = Math.max(45, Math.min(70, W / 28));
+    const n = Math.ceil(W / spacing) + 1;
+    const surfY = earthY + (H - earthY) * 0.22;
+
+    detectors = Array.from({ length: n }, (_, i) => {
+      const x = (i + 0.5) * (W / n);
+      const dist = Math.abs(x - groundX);
+      const delay = (dist / (W * 0.6)) * 0.9;
+      return {
+        x, y: surfY + (Math.random() - 0.5) * 12,
+        delay: clamp(delay, 0, 1),
+        lit: 0,
+      };
+    });
+  }
+
+  // ── Draw: background ──────────────────────────────────────────────────────
+  function drawBackground() {
+    const { earthY } = geo;
+
+    // Space
+    const spaceGr = ctx.createLinearGradient(0, 0, 0, H * 0.28);
+    spaceGr.addColorStop(0,   '#000005');
+    spaceGr.addColorStop(1,   '#00102e');
+    ctx.fillStyle = spaceGr;
+    ctx.fillRect(0, 0, W, H * 0.28);
+
+    // Atmosphere
+    const atmGr = ctx.createLinearGradient(0, H * 0.20, 0, earthY);
+    atmGr.addColorStop(0,    '#00102e');
+    atmGr.addColorStop(0.12, '#001540');
+    atmGr.addColorStop(0.35, '#001f5c');
+    atmGr.addColorStop(0.65, '#002f78');
+    atmGr.addColorStop(1,    '#00419e');
+    ctx.fillStyle = atmGr;
+    ctx.fillRect(0, H * 0.20, W, earthY - H * 0.20);
+
+    // Subtle atmosphere layer bands
+    const bands = [0.18, 0.36, 0.62];
+    bands.forEach(f => {
+      const y = H * 0.20 + (earthY - H * 0.20) * f;
+      ctx.beginPath();
+      ctx.moveTo(0, y); ctx.lineTo(W, y);
+      ctx.strokeStyle = 'rgba(80,140,220,0.08)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    });
+
+    // Earth surface
+    const earthGr = ctx.createLinearGradient(0, earthY, 0, H);
+    earthGr.addColorStop(0,   '#19431a');
+    earthGr.addColorStop(0.3, '#163614');
+    earthGr.addColorStop(1,   '#0d240d');
+    ctx.fillStyle = earthGr;
+    ctx.fillRect(0, earthY, W, H - earthY);
+
+    // Horizon glow
+    const hGr = ctx.createLinearGradient(0, earthY - 12, 0, earthY + 8);
+    hGr.addColorStop(0, 'rgba(0,70,160,0)');
+    hGr.addColorStop(0.6, 'rgba(0,55,130,0.18)');
+    hGr.addColorStop(1, 'rgba(10,60,10,0)');
+    ctx.fillStyle = hGr;
+    ctx.fillRect(0, earthY - 12, W, 20);
+  }
+
+  // ── Draw: layer labels ────────────────────────────────────────────────────
+  function drawLayerLabels(alpha) {
+    if (alpha <= 0) return;
+    const { earthY } = geo;
+    const atmH = earthY - H * 0.20;
+
+    ctx.save();
+    ctx.globalAlpha = alpha * 0.65;
+    ctx.font = '10px "Courier New", monospace';
+    ctx.fillStyle = 'rgba(100,165,230,1)';
+    ctx.textAlign = 'left';
+
+    const items = [
+      { f: -0.5,  label: '── SPACE' },
+      { f: 0.05,  label: '── MESOSPHERE  ~80 km' },
+      { f: 0.22,  label: '── STRATOSPHERE  ~50 km' },
+      { f: 0.55,  label: '── TROPOSPHERE  ~12 km' },
+    ];
+    items.forEach(({ f, label }) => {
+      const y = H * 0.20 + atmH * f;
+      if (y < 60 || y > earthY - 10) return;
+      ctx.fillText(label, 14, y + 4);
+    });
+
+    // Earth surface label
+    ctx.fillText('── EARTH SURFACE', 14, earthY + (H - earthY) * 0.28);
+    ctx.restore();
+  }
+
+  // ── Draw: stars ───────────────────────────────────────────────────────────
+  function drawStars(t) {
+    stars.forEach(s => {
+      const a = 0.35 + 0.45 * Math.sin(s.ph + t * s.sp);
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(255,255,255,${a.toFixed(3)})`;
+      ctx.fill();
+    });
+  }
+
+  // ── Draw: UHECR particle ──────────────────────────────────────────────────
+  function drawUHECR(progress) {
+    if (progress <= 0) return;
+    const { ox, oy, ix, iy, udx, udy, BACK } = geo;
+    const totalLen = BACK;
+    const cx = ox + udx * progress * totalLen;
+    const cy = oy + udy * progress * totalLen;
+
+    // Trail
+    const trailLen = Math.min(progress * totalLen, totalLen * 0.45);
+    const tx = cx - udx * trailLen;
+    const ty = cy - udy * trailLen;
+
+    const trailGr = ctx.createLinearGradient(tx, ty, cx, cy);
+    trailGr.addColorStop(0, 'rgba(80,160,255,0)');
+    trailGr.addColorStop(0.5, 'rgba(160,210,255,0.25)');
+    trailGr.addColorStop(1, 'rgba(255,255,255,0.85)');
+    ctx.beginPath();
+    ctx.moveTo(tx, ty);
+    ctx.lineTo(cx, cy);
+    ctx.strokeStyle = trailGr;
+    ctx.lineWidth = 2.2;
+    ctx.stroke();
+
+    // Glow halo
+    const glow = ctx.createRadialGradient(cx, cy, 0, cx, cy, 14);
+    glow.addColorStop(0, 'rgba(255,255,255,0.95)');
+    glow.addColorStop(0.25, 'rgba(180,220,255,0.6)');
+    glow.addColorStop(1, 'rgba(80,150,255,0)');
+    ctx.beginPath();
+    ctx.arc(cx, cy, 14, 0, Math.PI * 2);
+    ctx.fillStyle = glow;
+    ctx.fill();
+
+    // Core
+    ctx.beginPath();
+    ctx.arc(cx, cy, 2.5, 0, Math.PI * 2);
+    ctx.fillStyle = '#ffffff';
+    ctx.fill();
+  }
+
+  // ── Draw: first-interaction flash ─────────────────────────────────────────
+  function drawFlash(a) {
+    if (a <= 0) return;
+    const { ix, iy } = geo;
+    const r = 50 + 30 * a;
+    const g = ctx.createRadialGradient(ix, iy, 0, ix, iy, r);
+    g.addColorStop(0, `rgba(255,255,255,${a})`);
+    g.addColorStop(0.2, `rgba(200,230,255,${a * 0.7})`);
+    g.addColorStop(1, 'rgba(80,150,255,0)');
+    ctx.beginPath();
+    ctx.arc(ix, iy, r, 0, Math.PI * 2);
+    ctx.fillStyle = g;
+    ctx.fill();
+  }
+
+  // ── Draw: air shower ──────────────────────────────────────────────────────
+  function drawShower(progress) {
+    if (progress <= 0) return;
+    const { ix, iy, udx, udy, pdx, pdy, sGround } = geo;
+    const sFront = progress * sGround;
+
+    ctx.save();
+    showerTracks.forEach(tr => {
+      if (tr.s0 > sFront) return;
+      const frac = clamp((sFront - tr.s0) / (tr.s1 - tr.s0), 0, 1);
+      if (frac <= 0) return;
+
+      const vx2 = lerp(tr.x1, tr.x2, frac);
+      const vy2 = lerp(tr.y1, tr.y2, frac);
+
+      ctx.beginPath();
+      ctx.moveTo(tr.x1, tr.y1);
+      ctx.lineTo(vx2, vy2);
+      ctx.strokeStyle = tr.color;
+      ctx.globalAlpha = tr.alpha * Math.min(progress * 4, 1);
+      ctx.lineWidth = tr.width;
+      ctx.stroke();
+    });
+    ctx.restore();
+
+    // Shower front disc
+    if (progress < 0.97) {
+      const fxC = ix + udx * sFront;
+      const fyC = iy + udy * sFront;
+      // Perpendicular half-width at this depth
+      const hw = sFront * Math.tan(7 * Math.PI / 180);
+      const x1 = fxC + pdx * hw, y1 = fyC + pdy * hw;
+      const x2 = fxC - pdx * hw, y2 = fyC - pdy * hw;
+      const frontGr = ctx.createLinearGradient(x1, y1, x2, y2);
+      frontGr.addColorStop(0,   'rgba(100,180,255,0)');
+      frontGr.addColorStop(0.25,'rgba(160,210,255,0.5)');
+      frontGr.addColorStop(0.5, 'rgba(220,240,255,0.85)');
+      frontGr.addColorStop(0.75,'rgba(160,210,255,0.5)');
+      frontGr.addColorStop(1,   'rgba(100,180,255,0)');
+      ctx.beginPath();
+      ctx.moveTo(x1, y1); ctx.lineTo(x2, y2);
+      ctx.strokeStyle = frontGr;
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
+  }
+
+  // ── Draw: surface detectors ───────────────────────────────────────────────
+  function drawDetectors(detP) {
+    detectors.forEach(d => {
+      const p = ease(clamp((detP - d.delay) / 0.18, 0, 1));
+
+      // Base station
+      ctx.beginPath();
+      ctx.rect(d.x - 5, d.y - 3, 10, 6);
+      ctx.fillStyle = `rgba(40,90,40,${0.55 + p * 0.35})`;
+      ctx.fill();
+      ctx.strokeStyle = `rgba(60,130,60,${0.6 + p * 0.35})`;
+      ctx.lineWidth = 0.6;
+      ctx.stroke();
+
+      if (p > 0) {
+        // Glow
+        const gr = ctx.createRadialGradient(d.x, d.y, 0, d.x, d.y, 28 * p);
+        gr.addColorStop(0, `rgba(80,255,130,${0.65 * p})`);
+        gr.addColorStop(1, 'rgba(80,255,130,0)');
+        ctx.beginPath();
+        ctx.arc(d.x, d.y, 28 * p, 0, Math.PI * 2);
+        ctx.fillStyle = gr;
+        ctx.fill();
+
+        // Bright dot
+        ctx.beginPath();
+        ctx.arc(d.x, d.y, 2.5 * p, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(160,255,190,${p})`;
+        ctx.fill();
+      }
+    });
+  }
+
+  // ── Draw: annotation labels ───────────────────────────────────────────────
+  function drawAnnotations(t) {
+    const { ix, iy, ox, oy, udx, udy, BACK, earthY } = geo;
+    ctx.save();
+
+    // UHECR label (follows particle)
+    const uP = phase(t, T_UHECR_0, T_UHECR_1);
+    const lblFadeOut = phase(t, T_UHECR_1 - 0.3, T_FLASH_END);
+    const uLblA = ease(phase(t, T_UHECR_0 + 0.3, T_UHECR_0 + 1.1)) * (1 - lblFadeOut);
+    if (uLblA > 0) {
+      const cx = ox + udx * uP * BACK;
+      const cy = oy + udy * uP * BACK;
+      const offX = 58, offY = -22;
+      ctx.globalAlpha = uLblA;
+      ctx.font = 'bold 11px "Courier New", monospace';
+      ctx.fillStyle = 'rgba(255,255,200,0.95)';
+      ctx.textAlign = 'left';
+      ctx.fillText('UHECR', cx + offX, cy + offY);
+      ctx.font = '10px "Courier New", monospace';
+      ctx.fillStyle = 'rgba(255,240,160,0.75)';
+      ctx.fillText('E ≳ 10¹⁸ eV', cx + offX, cy + offY + 15);
+    }
+
+    // "First Interaction" label at flash
+    const fiA = ease(phase(t, T_UHECR_1, T_FLASH_END)) * (1 - ease(phase(t, T_FLASH_END, T_SHOWER_0 + 0.4)));
+    if (fiA > 0) {
+      ctx.globalAlpha = fiA;
+      ctx.font = '10px "Courier New", monospace';
+      ctx.fillStyle = 'rgba(255,255,255,0.9)';
+      ctx.textAlign = 'left';
+      ctx.fillText('FIRST INTERACTION', ix + 20, iy - 16);
+    }
+
+    // Air shower labels
+    const shwA = ease(phase(t, T_SHOWER_0 + 1.0, T_SHOWER_1 - 0.2)) * (1 - ease(phase(t, T_FADE_0, T_FADE_1)));
+    if (shwA > 0) {
+      const midY = lerp(iy, earthY, 0.48);
+      ctx.globalAlpha = shwA;
+      ctx.textAlign = 'right';
+      ctx.font = 'bold 11px "Courier New", monospace';
+      ctx.fillStyle = 'rgba(150,205,255,0.9)';
+      ctx.fillText('EXTENSIVE AIR SHOWER', W - 16, midY - 6);
+      ctx.font = '10px "Courier New", monospace';
+      ctx.fillStyle = 'rgba(120,185,255,0.65)';
+      ctx.fillText('Electromagnetic component', W - 16, midY + 12);
+      ctx.fillStyle = 'rgba(255,140,90,0.65)';
+      ctx.fillText('Muonic component', W - 16, midY + 28);
+
+      // Small color swatches
+      ctx.fillStyle = 'rgba(120,185,255,0.65)';
+      ctx.fillRect(W - 16 - ctx.measureText('Electromagnetic component').width - 12, midY + 5, 8, 6);
+      ctx.fillStyle = 'rgba(255,140,90,0.65)';
+      ctx.fillRect(W - 16 - ctx.measureText('Muonic component').width - 12, midY + 21, 8, 6);
+    }
+
+    // Detector label
+    const detA = ease(phase(t, T_DET_0 + 0.8, T_DET_1)) * (1 - ease(phase(t, T_FADE_0, T_FADE_1)));
+    if (detA > 0) {
+      ctx.globalAlpha = detA;
+      ctx.textAlign = 'center';
+      ctx.font = 'bold 11px "Courier New", monospace';
+      ctx.fillStyle = 'rgba(100,255,150,0.85)';
+      ctx.fillText('SURFACE DETECTOR ARRAY', W / 2, earthY + (H - earthY) * 0.70);
+    }
+
+    ctx.restore();
+  }
+
+  // ── Animation loop ────────────────────────────────────────────────────────
+  function frame(ts) {
+    if (!startTs) startTs = ts;
+    const t = ((ts - startTs) / 1000) % CYCLE;
+
+    ctx.clearRect(0, 0, W, H);
+    drawBackground();
+    drawStars(t);
+    drawLayerLabels(ease(phase(t, 0, 1.0)) * (1 - ease(phase(t, T_FADE_0, T_FADE_1))));
+
+    // UHECR in flight
+    if (t < T_UHECR_1 + 0.1) {
+      drawUHECR(ease(phase(t, T_UHECR_0, T_UHECR_1)));
+    }
+
+    // Flash at interaction point
+    {
+      const fp = phase(t, T_UHECR_1, T_FLASH_END);
+      const fa = fp < 0.35 ? fp / 0.35 : 1 - (fp - 0.35) / 0.65;
+      drawFlash(clamp(fa, 0, 1));
+    }
+
+    // Shower development
+    drawShower(ease(phase(t, T_SHOWER_0, T_SHOWER_1)) * (1 - ease(phase(t, T_FADE_0, T_FADE_1))));
+
+    // Detectors
+    drawDetectors(phase(t, T_DET_0, T_DET_1) * (1 - ease(phase(t, T_FADE_0, T_FADE_1))));
+
+    // Labels
+    drawAnnotations(t);
+
+    requestAnimationFrame(frame);
+  }
+
+  // ── Init / resize ─────────────────────────────────────────────────────────
+  function init() {
+    setupGeo();
+    buildStars();
+    buildShower();
+    buildDetectors();
+    startTs = null;
+  }
+
+  window.addEventListener('resize', () => { init(); });
+
+  init();
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
