@@ -1,0 +1,683 @@
+---
+layout: null
+permalink: /3d/
+---
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>3D Air Shower — UHECRs | uhecrs.com</title>
+  <meta name="description" content="Interactive 3D simulation of an ultra-high-energy cosmic ray air shower: hadronic core, electromagnetic and muonic components, water-Cherenkov surface detectors and radio antennas.">
+  <link rel="canonical" href="https://uhecrs.com/3d/">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { height: 100%; }
+    body { background: #000; overflow: hidden; font-family: 'Helvetica Neue', Arial, sans-serif; }
+    canvas { display: block; }
+    #overlay { position: fixed; inset: 0; pointer-events: none; }
+    #head {
+      position: absolute; top: 20px; left: 50%;
+      transform: translateX(-50%);
+      text-align: center;
+    }
+    #head h1 {
+      font-size: clamp(1.3rem, 3.4vw, 2.2rem);
+      font-weight: 100; letter-spacing: 0.5em; margin-right: -0.5em;
+      color: #fff;
+      text-shadow: 0 0 34px rgba(80,160,255,0.9);
+    }
+    #head p {
+      font-size: clamp(0.55rem, 1.1vw, 0.75rem);
+      color: rgba(150,205,255,0.65);
+      letter-spacing: 0.3em; margin-right: -0.3em;
+      text-transform: uppercase; margin-top: 6px;
+    }
+    #back {
+      position: absolute; top: 22px; left: 20px;
+      pointer-events: auto;
+      color: rgba(155,205,255,0.8); text-decoration: none;
+      font-size: 0.72rem; letter-spacing: 0.14em; text-transform: uppercase;
+      border: 1px solid rgba(100,160,230,0.28); border-radius: 3px;
+      padding: 6px 12px; background: rgba(4,12,26,0.5);
+    }
+    #back:hover { color: #fff; border-color: rgba(160,210,255,0.7); }
+    #hud {
+      position: absolute; left: 16px; bottom: 16px;
+      font-family: 'Courier New', monospace;
+      font-size: 11px; line-height: 16px;
+      color: rgba(140,255,190,0.9);
+      background: rgba(2,12,24,0.55);
+      border: 1px solid rgba(80,180,220,0.35);
+      padding: 10px 14px;
+      white-space: pre;
+      display: none;
+    }
+    #hud .t { color: rgba(120,230,255,0.95); font-weight: bold; }
+    #legend {
+      position: absolute; right: 16px; top: 50%;
+      transform: translateY(-50%);
+      font-family: 'Courier New', monospace;
+      font-size: 10px; line-height: 17px;
+      color: rgba(160,210,255,0.85);
+      text-align: right;
+      opacity: 0; transition: opacity 1s;
+    }
+    #legend .had { color: rgba(255,246,190,0.9); }
+    #legend .em  { color: rgba(140,195,255,0.9); }
+    #legend .mu  { color: rgba(255,150,90,0.9); }
+    #legend .rd  { color: rgba(210,150,255,0.9); }
+    #hint {
+      position: absolute; bottom: 16px; left: 50%;
+      transform: translateX(-50%);
+      font-size: 0.62rem; letter-spacing: 0.18em; text-transform: uppercase;
+      color: rgba(120,180,255,0.4);
+      white-space: nowrap;
+    }
+    #loading {
+      position: absolute; inset: 0;
+      display: flex; align-items: center; justify-content: center;
+      color: rgba(150,205,255,0.7);
+      font-size: 0.8rem; letter-spacing: 0.3em; text-transform: uppercase;
+    }
+  </style>
+</head>
+<body>
+<div id="overlay">
+  <a id="back" href="/">&#8592; uhecrs.com</a>
+  <div id="head">
+    <h1>UHECR</h1>
+    <p>3D Air Shower Simulation</p>
+  </div>
+  <div id="legend">
+    EXTENSIVE AIR SHOWER<br>
+    <span class="had">&#9632; hadronic core</span><br>
+    <span class="em">&#9632; e&plusmn; / &gamma; electromagnetic</span><br>
+    <span class="mu">&#9632; &mu;&plusmn; muons &rarr; ground</span><br>
+    <span class="rd">&#9632; radio emission</span>
+  </div>
+  <div id="hud"></div>
+  <div id="hint">drag to orbit &middot; scroll to zoom &middot; new event every 16 s</div>
+  <div id="loading">loading 3D&hellip;</div>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+// ═══════════ Timing (matches the 2D landing page) ═══════════
+const CYCLE = 16;
+const T = { prim0: 1.0, prim1: 2.7, flash: 2.7, ground: 6.7, fade0: 13.6, fade1: 15.8 };
+
+const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
+const phase = (t, a, b) => clamp((t - a) / (b - a), 0, 1);
+const ease  = t => t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
+const rand  = (a, b) => a + Math.random() * (b - a);
+const gauss = () => (Math.random() + Math.random() + Math.random() - 1.5) / 1.5;
+const GH = (x, xm, lam) => x <= 0 ? 0 : Math.pow(x / xm, xm / lam) * Math.exp((xm - x) / lam);
+
+// ═══════════ Renderer / scene ═══════════
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
+renderer.setSize(window.innerWidth, window.innerHeight);
+document.body.appendChild(renderer.domElement);
+document.getElementById('loading').style.display = 'none';
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x02060f);
+scene.fog = new THREE.Fog(0x02060f, 3500, 13000);
+
+const camera = new THREE.PerspectiveCamera(48, innerWidth / innerHeight, 1, 30000);
+camera.position.set(1900, 850, 1900);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(0, 750, 0);
+controls.enableDamping = true;
+controls.dampingFactor = 0.06;
+controls.autoRotate = true;
+controls.autoRotateSpeed = 0.45;
+controls.minDistance = 500;
+controls.maxDistance = 9000;
+controls.maxPolarAngle = Math.PI * 0.52;
+
+scene.add(new THREE.HemisphereLight(0x22406a, 0x0a140a, 0.9));
+const dir = new THREE.DirectionalLight(0x8090b0, 0.35);
+dir.position.set(1000, 2000, 500);
+scene.add(dir);
+
+// ═══════════ Static scene: ground, stars ═══════════
+const ground = new THREE.Mesh(
+  new THREE.CircleGeometry(9000, 64),
+  new THREE.MeshLambertMaterial({ color: 0x0a1608 })
+);
+ground.rotation.x = -Math.PI / 2;
+scene.add(ground);
+
+{ // starfield
+  const n = 1800, pos = new Float32Array(n * 3);
+  for (let i = 0; i < n; i++) {
+    const th = rand(0, Math.PI * 2), ph = Math.acos(rand(0.02, 1));
+    const R = 12000;
+    pos[i * 3]     = R * Math.sin(ph) * Math.cos(th);
+    pos[i * 3 + 1] = R * Math.cos(ph);
+    pos[i * 3 + 2] = R * Math.sin(ph) * Math.sin(th);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  scene.add(new THREE.Points(g, new THREE.PointsMaterial({
+    color: 0xbfd4ff, size: 2.2, sizeAttenuation: false, fog: false,
+    transparent: true, opacity: 0.85,
+  })));
+}
+
+// glow sprite texture (shared)
+function makeGlowTexture() {
+  const c = document.createElement('canvas');
+  c.width = c.height = 64;
+  const g = c.getContext('2d');
+  const gr = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+  gr.addColorStop(0, 'rgba(255,255,255,1)');
+  gr.addColorStop(0.3, 'rgba(255,255,255,0.5)');
+  gr.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = gr;
+  g.fillRect(0, 0, 64, 64);
+  return new THREE.CanvasTexture(c);
+}
+const glowTex = makeGlowTexture();
+const spriteMat = (color, opacity) => new THREE.SpriteMaterial({
+  map: glowTex, color, transparent: true, opacity,
+  blending: THREE.AdditiveBlending, depthWrite: false,
+});
+
+// ═══════════ Detector arrays (static bodies, dynamic glow) ═══════════
+const TANK_BASE = new THREE.Color(0x8a7a58);
+const TANK_HOT  = new THREE.Color(0x50ffff);
+let tanksMesh, tankData = [];
+{
+  const geo = new THREE.CylinderGeometry(28, 28, 26, 14);
+  const mat = new THREE.MeshLambertMaterial({ color: 0xffffff });
+  const cells = [];
+  const SP = 330;
+  for (let i = -6; i <= 6; i++)
+    for (let j = -6; j <= 6; j++) {
+      const x = i * SP + rand(-30, 30), z = j * SP + rand(-30, 30);
+      if (Math.hypot(x, z) < 2300) cells.push([x, z]);
+    }
+  tanksMesh = new THREE.InstancedMesh(geo, mat, cells.length);
+  const m = new THREE.Matrix4();
+  cells.forEach(([x, z], k) => {
+    m.setPosition(x, 13, z);
+    tanksMesh.setMatrixAt(k, m);
+    tanksMesh.setColorAt(k, TANK_BASE);
+    tankData.push({ pos: new THREE.Vector3(x, 13, z), tTrig: 0, amp: 0 });
+  });
+  scene.add(tanksMesh);
+}
+
+// radio antennas: cross masts + flash sprites
+let antData = [];
+{
+  const mat = new THREE.LineBasicMaterial({ color: 0x3a4450 });
+  const pts = [];
+  const APOS = [];
+  for (let i = 0; i < 34; i++) {
+    const x = rand(-2100, 2100), z = rand(-2100, 2100);
+    if (Math.hypot(x, z) > 2200) { i--; continue; }
+    APOS.push([x, z]);
+    const h = 55;
+    pts.push(x, 0, z,  x, h, z);
+    pts.push(x - 20, h + 16, z,  x, h, z);
+    pts.push(x + 20, h + 16, z,  x, h, z);
+    pts.push(x, h, z - 20,  x, h + 16, z - 20);
+    pts.push(x, h, z + 20,  x, h + 16, z + 20);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(pts), 3));
+  scene.add(new THREE.LineSegments(g, mat));
+  APOS.forEach(([x, z]) => {
+    const s = new THREE.Sprite(spriteMat(0xcc88ff, 0));
+    s.position.set(x, 60, z);
+    s.scale.setScalar(90);
+    scene.add(s);
+    antData.push({ pos: new THREE.Vector3(x, 60, z), sprite: s, tTrig: 0, amp: 0 });
+  });
+}
+
+// ═══════════ Per-event objects ═══════════
+const NTR = 950;
+const trackGeo = new THREE.BufferGeometry();
+const trackPos = new Float32Array(NTR * 6);
+const trackCol = new Float32Array(NTR * 6);
+trackGeo.setAttribute('position', new THREE.BufferAttribute(trackPos, 3));
+trackGeo.setAttribute('color', new THREE.BufferAttribute(trackCol, 3));
+scene.add(new THREE.LineSegments(trackGeo, new THREE.LineBasicMaterial({
+  vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false,
+})));
+let segs = [];   // {a:Vector3, b:Vector3, s0, s1, col:Color, alpha, kind}
+
+// shower front: partial sphere cap
+const frontMesh = new THREE.Mesh(
+  new THREE.SphereGeometry(1, 48, 18, 0, Math.PI * 2, 0, 0.34),
+  new THREE.MeshBasicMaterial({
+    color: 0x9fccff, transparent: true, opacity: 0,
+    blending: THREE.AdditiveBlending, side: THREE.DoubleSide, depthWrite: false,
+  })
+);
+scene.add(frontMesh);
+
+// Cherenkov cone
+const coneMesh = new THREE.Mesh(
+  new THREE.ConeGeometry(1, 1, 36, 1, true),
+  new THREE.MeshBasicMaterial({
+    color: 0x82c3ff, transparent: true, opacity: 0,
+    blending: THREE.AdditiveBlending, side: THREE.DoubleSide, depthWrite: false,
+  })
+);
+scene.add(coneMesh);
+
+// Cherenkov ground pool + impact ring
+const poolMesh = new THREE.Mesh(
+  new THREE.CircleGeometry(1, 40),
+  new THREE.MeshBasicMaterial({
+    color: 0x78b9ff, transparent: true, opacity: 0,
+    blending: THREE.AdditiveBlending, depthWrite: false,
+  })
+);
+poolMesh.rotation.x = -Math.PI / 2;
+poolMesh.position.y = 2;
+scene.add(poolMesh);
+
+const ringMesh = new THREE.Mesh(
+  new THREE.RingGeometry(0.92, 1, 48),
+  new THREE.MeshBasicMaterial({
+    color: 0x9fdcff, transparent: true, opacity: 0,
+    blending: THREE.AdditiveBlending, side: THREE.DoubleSide, depthWrite: false,
+  })
+);
+ringMesh.rotation.x = -Math.PI / 2;
+ringMesh.position.y = 3;
+scene.add(ringMesh);
+
+// fluorescence glow sprites along the axis
+const NFLUO = 26;
+const fluoSprites = Array.from({ length: NFLUO }, () => {
+  const s = new THREE.Sprite(spriteMat(0x9a8cff, 0));
+  scene.add(s);
+  return s;
+});
+
+// primary particle: sprite + trail
+const primSprite = new THREE.Sprite(spriteMat(0xffffff, 0));
+primSprite.scale.setScalar(120);
+scene.add(primSprite);
+const primTrailGeo = new THREE.BufferGeometry();
+primTrailGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(6), 3));
+const primTrailMat = new THREE.LineBasicMaterial({
+  color: 0xbfe0ff, transparent: true, opacity: 0,
+  blending: THREE.AdditiveBlending, depthWrite: false,
+});
+scene.add(new THREE.Line(primTrailGeo, primTrailMat));
+
+// flash sprite at first interaction
+const flashSprite = new THREE.Sprite(spriteMat(0xffffff, 0));
+scene.add(flashSprite);
+
+// spark cloud around the front
+const NSPARK = 550;
+const sparkGeo = new THREE.BufferGeometry();
+const sparkPos = new Float32Array(NSPARK * 3);
+sparkGeo.setAttribute('position', new THREE.BufferAttribute(sparkPos, 3));
+const sparkMat = new THREE.PointsMaterial({
+  color: 0xaad7ff, size: 14, transparent: true, opacity: 0.75,
+  blending: THREE.AdditiveBlending, depthWrite: false,
+});
+scene.add(new THREE.Points(sparkGeo, sparkMat));
+let sparks = [];   // {p:Vector3, v:Vector3, life, age}
+
+// ═══════════ Event build ═══════════
+let ev = null;
+const UP = new THREE.Vector3(0, 1, 0);
+
+function buildEvent() {
+  const theta = rand(24, 44) * Math.PI / 180;
+  const phi = rand(0, Math.PI * 2);
+  const d = new THREE.Vector3(
+    Math.sin(theta) * Math.cos(phi), -Math.cos(theta), Math.sin(theta) * Math.sin(phi)
+  );
+  const core = new THREE.Vector3(rand(-250, 250), 0, rand(-250, 250));
+  const hTop = 2400;
+  const S = hTop / Math.cos(theta);
+  const P0 = core.clone().sub(d.clone().multiplyScalar(S));
+  const e1 = new THREE.Vector3().crossVectors(d, UP).normalize();
+  const e2 = new THREE.Vector3().crossVectors(d, e1).normalize();
+  const xmaxFrac = rand(0.50, 0.62), lam = 0.13;
+  const eM = rand(1.2, 9.4), e20 = Math.random() < 0.12;
+
+  ev = {
+    d, core, S, P0, e1, e2, theta, xmaxFrac, lam,
+    ghMax: GH(xmaxFrac, xmaxFrac, lam),
+    c: S / (T.ground - T.flash),
+    hud: {
+      energy: (e20 ? rand(1.0, 1.9) : eM).toFixed(1) + ' × 10' + (e20 ? '²⁰' : '¹⁹') + ' eV',
+      zenith: Math.round(theta * 180 / Math.PI) + '°',
+      xmax: Math.round(680 + (xmaxFrac - 0.5) * 900) + ' g/cm²',
+    },
+  };
+
+  const latW = s => 12 + S * Math.tan(8 * Math.PI / 180) * Math.pow(clamp(s / S, 0, 1), 1.35);
+  const pos = (s, a, b) => P0.clone()
+    .add(d.clone().multiplyScalar(s))
+    .add(e1.clone().multiplyScalar(a))
+    .add(e2.clone().multiplyScalar(b));
+
+  // clamp endpoint above ground
+  const clampG = (a, b) => {
+    if (b.y < 0) {
+      const f = a.y / (a.y - b.y);
+      b.copy(a.clone().lerp(b, f));
+      b.y = 0.5;
+    }
+    return b;
+  };
+
+  segs = [];
+  const pushSeg = (s0, s1, a, b, col, alpha, kind) => {
+    if (segs.length >= NTR) return;
+    segs.push({ a, b: clampG(a, b), s0, s1, col, alpha, kind });
+  };
+
+  // hadronic core chain
+  let s = 0, ca = 0, cb = 0;
+  const nodes = [];
+  while (s < S * 0.68) {
+    const len = S * rand(0.09, 0.16);
+    const na2 = ca + gauss() * S * 0.006, nb2 = cb + gauss() * S * 0.006;
+    pushSeg(s, s + len, pos(s, ca, cb), pos(s + len, na2, nb2),
+      new THREE.Color().setHSL(rand(0.13, 0.16), 1, rand(0.75, 0.88)), rand(0.7, 1), 'had');
+    nodes.push([s + len, na2, nb2]);
+    s += len; ca = na2; cb = nb2;
+  }
+  // sub-showers at nodes
+  nodes.forEach(([ns, na, nb]) => {
+    for (let i = 0, n = 3 + (Math.random() * 3 | 0); i < n; i++) {
+      const len = S * rand(0.05, 0.14);
+      const w = latW(ns) * 0.5;
+      pushSeg(ns, ns + len, pos(ns, na, nb),
+        pos(ns + len, na + gauss() * w, nb + gauss() * w),
+        new THREE.Color().setHSL(rand(0.55, 0.62), 0.95, rand(0.65, 0.8)), rand(0.35, 0.6), 'em');
+    }
+  });
+  // EM cloud sampled from Gaisser-Hillas
+  let placed = 0, guard = 0;
+  while (placed < 640 && guard++ < 25000 && segs.length < NTR - 90) {
+    const x = Math.random();
+    if (Math.random() > GH(x, xmaxFrac, lam) / ev.ghMax) continue;
+    const s0 = x * S, w = latW(s0);
+    const a0 = gauss() * w * 0.55, b0 = gauss() * w * 0.55;
+    const len = S * rand(0.025, 0.10);
+    pushSeg(s0, s0 + len, pos(s0, a0, b0),
+      pos(s0 + len, a0 + gauss() * w * 0.35, b0 + gauss() * w * 0.35),
+      new THREE.Color().setHSL(rand(0.55, 0.64), 0.95, rand(0.6, 0.85)), rand(0.18, 0.5), 'em');
+    placed++;
+  }
+  // muons
+  for (let i = 0; i < 90; i++) {
+    const s0 = S * rand(0.08, 0.45);
+    const w = latW(s0) * 0.35;
+    const a0 = gauss() * w, b0 = gauss() * w;
+    const sl1 = gauss() * 0.13, sl2 = gauss() * 0.13;
+    pushSeg(s0, S, pos(s0, a0, b0),
+      pos(S, a0 + (S - s0) * sl1, b0 + (S - s0) * sl2),
+      new THREE.Color().setHSL(rand(0.04, 0.09), 1, rand(0.55, 0.7)), rand(0.5, 0.85), 'mu');
+  }
+
+  // write static positions (start collapsed)
+  for (let i = 0; i < NTR; i++) {
+    const o = i * 6;
+    if (i < segs.length) {
+      const g = segs[i];
+      trackPos[o] = g.a.x; trackPos[o + 1] = g.a.y; trackPos[o + 2] = g.a.z;
+      trackPos[o + 3] = g.a.x; trackPos[o + 4] = g.a.y; trackPos[o + 5] = g.a.z;
+    } else {
+      trackPos.fill(0, o, o + 6);
+    }
+    trackCol.fill(0, o, o + 6);
+  }
+  trackGeo.attributes.position.needsUpdate = true;
+  trackGeo.attributes.color.needsUpdate = true;
+
+  // detector trigger times (spherical front from P0)
+  tankData.forEach(tk => {
+    tk.tTrig = T.flash + tk.pos.distanceTo(P0) / ev.c;
+    const lat = Math.hypot(tk.pos.x - core.x, tk.pos.z - core.z);
+    tk.amp = Math.exp(-lat / 750);
+  });
+  antData.forEach(an => {
+    an.tTrig = T.flash + an.pos.distanceTo(P0) / ev.c;
+    const lat = Math.hypot(an.pos.x - core.x, an.pos.z - core.z);
+    an.amp = Math.exp(-lat / 700);
+  });
+  ev.hud.nsd = tankData.filter(k => k.amp > 0.05).length + ' stations';
+  ev.hud.nrd = antData.filter(k => k.amp > 0.08).length + ' antennas';
+
+  // orient front cap and cone along the axis
+  const q = new THREE.Quaternion().setFromUnitVectors(UP, d);
+  frontMesh.quaternion.copy(q);
+  const qc = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, -1, 0), d);
+  coneMesh.quaternion.copy(qc);
+
+  // fluorescence sprite placement
+  fluoSprites.forEach((sp, i) => {
+    const ss = (i + 0.5) / NFLUO * S;
+    sp.position.copy(pos(ss, 0, 0));
+    sp.scale.setScalar(latW(ss) * 3 + 120);
+    sp.userData = { tPass: T.flash + ss / ev.c, inten: GH(ss / S, xmaxFrac, lam) / ev.ghMax };
+  });
+
+  flashSprite.position.copy(P0);
+  poolMesh.position.set(core.x, 2, core.z);
+  ringMesh.position.set(core.x, 3, core.z);
+  ev.latW = latW;
+  ev.posF = pos;
+
+  sparks = [];
+  hudShown = -1;
+}
+
+// ═══════════ HUD ═══════════
+const hudEl = document.getElementById('hud');
+const legendEl = document.getElementById('legend');
+let hudShown = -1;
+function updateHUD(t) {
+  const t0 = T.ground + 0.5;
+  const lines = [
+    ['E      ' + ev.hud.energy, 0.3],
+    ['θ      ' + ev.hud.zenith, 0.55],
+    ['Xmax   ' + ev.hud.xmax, 0.8],
+    ['SD     ' + ev.hud.nsd, 1.05],
+    ['RD     ' + ev.hud.nrd, 1.3],
+    ['FD     1 telescope', 1.55],
+  ];
+  const vis = t > t0 && t < T.fade1 - 0.5;
+  hudEl.style.display = vis ? 'block' : 'none';
+  if (!vis) { hudShown = -1; return; }
+  const n = lines.filter(l => t > t0 + l[1]).length;
+  if (n !== hudShown) {
+    hudShown = n;
+    hudEl.innerHTML = '<span class="t">EVENT RECONSTRUCTION</span>\n' +
+      lines.slice(0, n).map(l => l[0]).join('\n');
+  }
+  legendEl.style.opacity = (t > T.flash + 1.5 && t < T.fade0) ? 1 : 0;
+}
+
+// ═══════════ Animation ═══════════
+const clock = new THREE.Clock();
+let lastCycle = -1, prevT = 0;
+buildEvent();
+
+const tmpC = new THREE.Color();
+
+function animate() {
+  requestAnimationFrame(animate);
+  const elapsed = clock.getElapsedTime();
+  const cyc = Math.floor(elapsed / CYCLE);
+  const t = elapsed % CYCLE;
+  const dt = Math.min(0.05, t - prevT > 0 ? t - prevT : 0.016);
+  prevT = t;
+  if (cyc !== lastCycle) { lastCycle = cyc; if (cyc > 0) buildEvent(); }
+
+  const master = ease(phase(t, 0, 0.9)) * (1 - ease(phase(t, T.fade0, T.fade1)));
+  const sF = clamp((t - T.flash) * ev.c, 0, ev.S);
+  const inten = GH(sF / ev.S, ev.xmaxFrac, ev.lam) / ev.ghMax;
+
+  // ── primary ──
+  const pp = phase(t, T.prim0, T.prim1);
+  if (pp > 0 && pp < 1) {
+    const BACK = ev.S * 1.1;
+    const p = ev.P0.clone().sub(ev.d.clone().multiplyScalar(BACK * (1 - pp)));
+    primSprite.position.copy(p);
+    primSprite.material.opacity = master;
+    const tail = p.clone().sub(ev.d.clone().multiplyScalar(Math.min(BACK * pp, 500)));
+    const tp = primTrailGeo.attributes.position.array;
+    tp[0] = tail.x; tp[1] = tail.y; tp[2] = tail.z;
+    tp[3] = p.x; tp[4] = p.y; tp[5] = p.z;
+    primTrailGeo.attributes.position.needsUpdate = true;
+    primTrailMat.opacity = 0.5 * master;
+  } else {
+    primSprite.material.opacity = 0;
+    primTrailMat.opacity = 0;
+  }
+
+  // ── first-interaction flash ──
+  const fdt = t - T.flash;
+  if (fdt > 0 && fdt < 0.8) {
+    const fa = fdt < 0.12 ? fdt / 0.12 : Math.max(0, 1 - (fdt - 0.12) / 0.55);
+    flashSprite.material.opacity = fa * master;
+    flashSprite.scale.setScalar(200 + fdt * 700);
+  } else flashSprite.material.opacity = 0;
+
+  // ── tracks: reveal + attenuation ──
+  if (t > T.flash - 0.05) {
+    for (let i = 0; i < segs.length; i++) {
+      const g = segs[i], o = i * 6;
+      let al = 0, fx = g.a.x, fy = g.a.y, fz = g.a.z;
+      if (g.s0 <= sF) {
+        const f = clamp((sF - g.s0) / (g.s1 - g.s0), 0, 1);
+        fx = g.a.x + (g.b.x - g.a.x) * f;
+        fy = g.a.y + (g.b.y - g.a.y) * f;
+        fz = g.a.z + (g.b.z - g.a.z) * f;
+        al = g.alpha * master;
+        if (g.kind === 'em' && sF > g.s1) al *= Math.exp(-(sF - g.s1) / (ev.S * 0.22));
+      }
+      trackPos[o + 3] = fx; trackPos[o + 4] = fy; trackPos[o + 5] = fz;
+      tmpC.copy(g.col).multiplyScalar(al);
+      trackCol[o] = tmpC.r; trackCol[o + 1] = tmpC.g; trackCol[o + 2] = tmpC.b;
+      trackCol[o + 3] = tmpC.r; trackCol[o + 4] = tmpC.g; trackCol[o + 5] = tmpC.b;
+    }
+    trackGeo.attributes.position.needsUpdate = true;
+    trackGeo.attributes.color.needsUpdate = true;
+  }
+
+  // ── shower front cap ──
+  if (sF > 10 && sF < ev.S * 0.995) {
+    frontMesh.position.copy(ev.P0);
+    frontMesh.scale.setScalar(sF);
+    frontMesh.material.opacity = 0.10 * master * (0.4 + 0.6 * inten);
+  } else frontMesh.material.opacity = 0;
+
+  // ── Cherenkov cone + ground pool ──
+  if (sF > 10 && sF < ev.S * 0.99) {
+    const rem = ev.S - sF;
+    const front = ev.P0.clone().add(ev.d.clone().multiplyScalar(sF));
+    const r = rem * Math.tan(11 * Math.PI / 180) + 15;
+    coneMesh.position.copy(front.clone().add(ev.d.clone().multiplyScalar(rem / 2)));
+    coneMesh.scale.set(r, rem, r);
+    coneMesh.material.opacity = 0.07 * inten * master;
+    poolMesh.scale.setScalar(r + 60);
+    poolMesh.material.opacity = 0.10 * inten * master;
+  } else { coneMesh.material.opacity = 0; poolMesh.material.opacity = 0; }
+
+  // ── impact ring ──
+  const gdt = t - T.ground;
+  if (gdt > 0 && gdt < 1.4) {
+    ringMesh.scale.setScalar(30 + gdt * 900);
+    ringMesh.material.opacity = 0.5 * (1 - gdt / 1.4) * master;
+  } else ringMesh.material.opacity = 0;
+
+  // ── fluorescence ──
+  fluoSprites.forEach(sp => {
+    const u = sp.userData;
+    sp.material.opacity = (t > u.tPass)
+      ? 0.14 * u.inten * Math.exp(-(t - u.tPass) / 1.5) * master : 0;
+  });
+
+  // ── sparks ──
+  if (sF > 0 && sF < ev.S) {
+    let n = Math.min(12, Math.round(300 * inten * dt));
+    while (n-- > 0 && sparks.length < NSPARK) {
+      const w = ev.latW(sF) * 0.6;
+      const p = ev.posF(sF - rand(0, 60), gauss() * w, gauss() * w);
+      sparks.push({
+        p,
+        v: ev.d.clone().multiplyScalar(ev.c * rand(0.1, 0.35))
+          .add(new THREE.Vector3(gauss() * 70, gauss() * 70, gauss() * 70)),
+        life: rand(0.3, 0.7), age: 0,
+      });
+    }
+  }
+  sparks = sparks.filter(p => (p.age += dt) < p.life && p.p.y > 0);
+  for (let i = 0; i < NSPARK; i++) {
+    const o = i * 3;
+    if (i < sparks.length) {
+      const p = sparks[i];
+      p.p.addScaledVector(p.v, dt);
+      sparkPos[o] = p.p.x; sparkPos[o + 1] = p.p.y; sparkPos[o + 2] = p.p.z;
+    } else {
+      sparkPos[o] = 0; sparkPos[o + 1] = -9999; sparkPos[o + 2] = 0;
+    }
+  }
+  sparkGeo.attributes.position.needsUpdate = true;
+  sparkMat.opacity = 0.7 * master;
+
+  // ── tank triggers ──
+  let anyTank = false;
+  tankData.forEach((tk, k) => {
+    const dtt = t - tk.tTrig;
+    let glow = 0;
+    if (dtt > 0 && tk.amp > 0.05) glow = Math.exp(-dtt / 0.9) * tk.amp * master;
+    tmpC.copy(TANK_BASE).lerp(TANK_HOT, clamp(glow * 1.6, 0, 1));
+    tanksMesh.setColorAt(k, tmpC);
+    anyTank = true;
+  });
+  if (anyTank) tanksMesh.instanceColor.needsUpdate = true;
+
+  // ── antenna flashes ──
+  antData.forEach(an => {
+    const dta = t - an.tTrig;
+    an.sprite.material.opacity = (dta > 0 && an.amp > 0.08)
+      ? Math.exp(-dta / 0.55) * an.amp * 0.9 * master : 0;
+  });
+
+  updateHUD(t);
+  controls.update();
+  renderer.render(scene, camera);
+}
+animate();
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+</script>
+</body>
+</html>
