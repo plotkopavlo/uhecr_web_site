@@ -50,42 +50,53 @@
     }
   }
   </script>
+
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { height: 100%; }
     body { background: #000; overflow: hidden; }
     canvas { display: block; }
     #ui {
-      position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+      position: fixed; inset: 0;
       pointer-events: none;
       font-family: 'Helvetica Neue', Arial, sans-serif;
     }
     #site-title {
-      position: absolute; top: 22px; left: 50%;
+      position: absolute; top: 26px; left: 50%;
       transform: translateX(-50%);
       text-align: center;
     }
     #site-title h1 {
-      font-size: clamp(2rem, 5vw, 3.8rem);
+      font-size: clamp(2rem, 5vw, 3.6rem);
       font-weight: 100;
       letter-spacing: 0.55em;
+      margin-right: -0.55em;
       color: #fff;
-      text-shadow: 0 0 40px rgba(80,160,255,0.9), 0 0 80px rgba(40,100,200,0.4);
+      text-shadow: 0 0 40px rgba(80,160,255,0.9), 0 0 90px rgba(40,100,200,0.45);
     }
     #site-title p {
-      font-size: clamp(0.65rem, 1.4vw, 0.95rem);
-      color: rgba(140,200,255,0.65);
-      letter-spacing: 0.3em;
+      font-size: clamp(0.62rem, 1.4vw, 0.9rem);
+      color: rgba(150,205,255,0.7);
+      letter-spacing: 0.32em;
+      margin-right: -0.32em;
       text-transform: uppercase;
-      margin-top: 8px;
+      margin-top: 9px;
     }
     #tagline {
-      position: absolute; bottom: 24px; left: 50%;
+      position: absolute; bottom: 18px; left: 50%;
       transform: translateX(-50%);
       text-align: center;
-      color: rgba(120,180,255,0.45);
-      font-size: clamp(0.6rem, 1.1vw, 0.8rem);
-      letter-spacing: 0.18em;
+      color: rgba(120,180,255,0.42);
+      font-size: clamp(0.58rem, 1.05vw, 0.78rem);
+      letter-spacing: 0.16em;
       white-space: nowrap;
+    }
+    #tagline .credit {
+      display: block;
+      margin-top: 5px;
+      font-size: 0.82em;
+      color: rgba(110,160,220,0.30);
+      letter-spacing: 0.1em;
     }
   </style>
 </head>
@@ -96,496 +107,929 @@
     <h1>UHECR</h1>
     <p>Ultra-High-Energy Cosmic Rays</p>
   </div>
-  <div id="tagline">Knowledge base for the highest-energy particles in the universe &mdash; coming soon</div>
+  <div id="tagline">
+    Knowledge base for the highest-energy particles in the universe &mdash; coming soon
+    <span class="credit">&copy; 2026 Pavlo Plotko &mdash; created with Claude</span>
+  </div>
 </div>
 <script>
 (function () {
-  'use strict';
+'use strict';
 
-  const canvas = document.getElementById('c');
-  const ctx    = canvas.getContext('2d');
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+const TAU = Math.PI * 2;
 
-  // ── Timing (seconds) ─────────────────────────────────────────────────────
-  const CYCLE       = 13;
-  const T_UHECR_0   = 1.2;
-  const T_UHECR_1   = 2.9;   // UHECR reaches first-interaction point
-  const T_FLASH_END = 3.5;
-  const T_SHOWER_0  = 3.2;
-  const T_SHOWER_1  = 6.2;
-  const T_DET_0     = 5.8;
-  const T_DET_1     = 7.4;
-  const T_FADE_0    = 10.5;
-  const T_FADE_1    = 12.8;
+// ═══════════════════════ Timing (seconds) ═══════════════════════
+const CYCLE = 16;
+const T = {
+  in0: 0.0,   in1: 0.9,          // scene fade-in
+  prim0: 1.0, prim1: 2.7,        // primary cosmic ray flight
+  flash: 2.7,                    // first interaction (X0)
+  ground: 6.7,                   // shower front reaches ground (constant c)
+  fade0: 13.6, fade1: 15.8,      // scene fade-out
+};
 
-  // ── State ─────────────────────────────────────────────────────────────────
-  let W, H, geo, showerTracks, stars, detectors;
-  let startTs = null;
+// ═══════════════════════ Helpers ═══════════════════════
+const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
+const phase = (t, a, b) => clamp((t - a) / (b - a), 0, 1);
+const lerp  = (a, b, t) => a + (b - a) * t;
+const ease  = t => t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
+const rand  = (a, b) => a + Math.random() * (b - a);
+const gauss = () => (Math.random() + Math.random() + Math.random() - 1.5) / 1.5;
 
-  // ── Helpers ───────────────────────────────────────────────────────────────
-  const clamp  = (v, lo, hi) => v < lo ? lo : v > hi ? hi : v;
-  const phase  = (t, a, b) => clamp((t - a) / (b - a), 0, 1);
-  const lerp   = (a, b, t) => a + (b - a) * t;
-  const ease   = t => t < 0.5 ? 2*t*t : -1 + (4-2*t)*t;
+// ═══════════════════════ State ═══════════════════════
+let W, H, dpr;
+let bg = null;                   // prerendered background canvas
+let stars, ev, tanks, fdSite, tracks, fluoStrips;
+let sparks = [];
+let splash = [];
+let startTs = null, lastCycle = -1;
 
-  // ── Geometry setup ────────────────────────────────────────────────────────
-  function setupGeo() {
-    W = canvas.width  = window.innerWidth;
-    H = canvas.height = window.innerHeight;
+// ── Gaisser-Hillas longitudinal profile (X0 = 0, normalized) ──
+function GH(x, xm, lam) {
+  if (x <= 0) return 0;
+  return Math.pow(x / xm, xm / lam) * Math.exp((xm - x) / lam);
+}
 
-    // Shower zenith angle ~38° from vertical
-    const THETA = 38 * Math.PI / 180;
-    const udx = -Math.sin(THETA);   // ≈ -0.616  (going left)
-    const udy =  Math.cos(THETA);   // ≈  0.788  (going down)
-    // Perpendicular to shower axis (for transverse spread)
-    const pdx =  udy;
-    const pdy = -udx;
+// ═══════════════════════ Event geometry (randomized per loop) ═══════════════════════
+function buildEvent() {
+  // Zenith angle 26°–44°
+  const theta = rand(26, 44) * Math.PI / 180;
+  const udx = -Math.sin(theta), udy = Math.cos(theta);   // axis: down-left
+  const pdx = udy, pdy = -udx;                            // perpendicular
 
-    // First-interaction point (upper atmosphere)
-    const ix = W * 0.60;
-    const iy = H * 0.22;
+  const earthY = H * 0.845;
+  const ix = W * rand(0.58, 0.70);
+  const iy = H * rand(0.17, 0.21);
+  const S = (earthY - iy) / udy;                          // axis length to ground
+  const coreX = ix + udx * S;
 
-    // UHECR origin: back-track 280px along shower axis from interaction pt
-    const BACK = Math.min(H * 0.26, 300);
-    const ox = ix - udx * BACK;
-    const oy = iy - udy * BACK;
+  // Primary back-track distance until off-screen
+  const bx = udx < -1e-4 ? (W + 70 - ix) / (-udx) : 1e9;
+  const by = (iy + 70) / udy;
+  const BACK = Math.min(bx, by);
 
-    // Earth surface y
-    const earthY = H * 0.83;
+  const xmaxFrac = rand(0.50, 0.62);                      // Xmax position along axis
+  const lam = 0.13;
+  const ghMax = GH(xmaxFrac, xmaxFrac, lam);
 
-    // Distance along shower axis from interaction to ground
-    const sGround = (earthY - iy) / udy;
+  const c = S / (T.ground - T.flash);                     // front speed, px/s
 
-    // Ground hit x
-    const groundX = ix + udx * sGround;
+  // Event "reconstruction" numbers for the HUD
+  const eMant = rand(1.2, 9.4);
+  const e20 = Math.random() < 0.12;
+  ev = {
+    theta, udx, udy, pdx, pdy, earthY, ix, iy, S, coreX, BACK,
+    xmaxFrac, lam, ghMax, c,
+    hud: {
+      energy: (e20 ? rand(1.0, 1.9) : eMant).toFixed(1) + ' × 10' + (e20 ? '²⁰' : '¹⁹') + ' eV',
+      zenith: Math.round(theta * 180 / Math.PI) + '°',
+      xmax: Math.round(680 + (xmaxFrac - 0.5) * 900) + ' g/cm²',
+    },
+  };
+}
 
-    geo = { ix, iy, ox, oy, udx, udy, pdx, pdy, earthY, sGround, groundX, BACK };
+// Lateral half-width of the shower at depth s (px)
+function latW(s) {
+  const f = clamp(s / ev.S, 0, 1);
+  return 4 + ev.S * Math.tan(8 * Math.PI / 180) * Math.pow(f, 1.35);
+}
+
+// axis coords (s = depth, r = lateral) → screen
+function toXY(s, r) {
+  return [ev.ix + ev.udx * s + ev.pdx * r, ev.iy + ev.udy * s + ev.pdy * r];
+}
+
+// ═══════════════════════ Shower tracks ═══════════════════════
+function buildTracks() {
+  const { S, earthY } = ev;
+  tracks = [];
+
+  const push = (s0, r0, s1, r1, style) => {
+    let [x1, y1] = toXY(s0, r0);
+    let [x2, y2] = toXY(s1, r1);
+    if (y2 > earthY) {                                    // clip at ground
+      const f = (earthY - y1) / (y2 - y1);
+      x2 = lerp(x1, x2, f); y2 = earthY;
+    }
+    if (y1 > earthY) return;
+    tracks.push({ x1, y1, x2, y2, s0, s1, ...style });
+  };
+
+  // ── Hadronic core: chain of leading interactions along the axis ──
+  let s = 0, r = 0;
+  const nodes = [];
+  while (s < S * 0.68) {
+    const len = S * rand(0.09, 0.16);
+    const r2 = r + gauss() * S * 0.006;
+    push(s, r, s + len, r2, {
+      color: 'hsl(' + rand(48, 58) + ',100%,' + rand(78, 90) + '%)',
+      alpha: rand(0.65, 0.9), width: rand(1.3, 2.0), kind: 'had',
+    });
+    nodes.push([s + len, r2]);
+    s += len; r = r2;
   }
 
-  // ── Stars ─────────────────────────────────────────────────────────────────
-  function buildStars() {
-    const count = Math.floor(W * H / 4500);
-    stars = Array.from({ length: count }, () => ({
-      x: Math.random() * W,
-      y: Math.random() * H * 0.28,
-      r: Math.random() * 1.3 + 0.25,
-      ph: Math.random() * Math.PI * 2,
-      sp: 0.6 + Math.random() * 1.8,
-    }));
+  // ── Sub-showers branching off each hadronic node ──
+  nodes.forEach(([ns, nr]) => {
+    const nSub = 3 + Math.floor(Math.random() * 3);
+    for (let i = 0; i < nSub; i++) {
+      const len = S * rand(0.05, 0.14);
+      const dr = gauss() * latW(ns) * 0.5;
+      push(ns, nr, ns + len, nr + dr, {
+        color: 'hsl(' + rand(190, 225) + ',95%,' + rand(70, 85) + '%)',
+        alpha: rand(0.3, 0.6), width: rand(0.6, 1.1), kind: 'em',
+      });
+    }
+  });
+
+  // ── EM cloud: sampled from the Gaisser-Hillas profile ──
+  const NEM = Math.min(520, Math.floor(W * H / 2600));
+  let placed = 0, guard = 0;
+  while (placed < NEM && guard++ < NEM * 30) {
+    const x = Math.random();
+    if (Math.random() > GH(x, ev.xmaxFrac, ev.lam) / ev.ghMax) continue;
+    const s0 = x * S;
+    const r0 = gauss() * latW(s0) * 0.55;
+    const len = S * rand(0.025, 0.11);
+    const r1 = r0 + gauss() * latW(s0) * 0.3 + (r0 > 0 ? 1 : -1) * len * rand(0.02, 0.22);
+    push(s0, r0, s0 + len, r1, {
+      color: 'hsl(' + rand(190, 235) + ',95%,' + rand(68, 88) + '%)',
+      alpha: rand(0.16, 0.5), width: rand(0.5, 1.0), kind: 'em',
+    });
+    placed++;
   }
 
-  // ── Shower tracks ─────────────────────────────────────────────────────────
-  function buildShower() {
-    const { ix, iy, udx, udy, pdx, pdy, sGround } = geo;
-    const N = 200;
-    showerTracks = [];
+  // ── Muons: born early-mid shower, straight, penetrate to ground ──
+  const NMU = 85;
+  for (let i = 0; i < NMU; i++) {
+    const s0 = S * rand(0.08, 0.45);
+    const r0 = gauss() * latW(s0) * 0.35;
+    const spread = gauss() * 0.14;                        // lateral slope
+    const r1 = r0 + (S - s0) * spread;
+    push(s0, r0, S, r1, {
+      color: 'hsl(' + rand(14, 34) + ',100%,' + rand(58, 74) + '%)',
+      alpha: rand(0.4, 0.75), width: rand(1.0, 1.6), kind: 'mu',
+    });
+  }
+}
 
-    for (let i = 0; i < N; i++) {
-      const isMuon = Math.random() < 0.28;
+// ═══════════════════════ Fluorescence trail strips ═══════════════════════
+function buildFluo() {
+  const N = 30;
+  fluoStrips = Array.from({ length: N }, (_, i) => {
+    const s = (i + 0.5) / N * ev.S;
+    return { s, tPass: T.flash + s / ev.c, w: latW(s) };
+  });
+}
 
-      // Start depth along shower axis (particles are created in cascade)
-      const s0 = sGround * (0.02 + Math.random() * (isMuon ? 0.25 : 0.30));
+// ═══════════════════════ Detectors ═══════════════════════
+function buildDetectors() {
+  const { earthY, coreX, ix, iy } = ev;
+  const n = Math.max(10, Math.round(W / 78));
+  tanks = Array.from({ length: n }, (_, i) => {
+    const x = (i + 0.5) * (W / n) + rand(-8, 8);
+    const y = earthY + (H - earthY) * 0.30 + rand(-4, 4);
+    const d = Math.hypot(x - ix, y - iy);                 // distance from X0 (spherical front)
+    const lat = Math.abs(x - coreX);
+    const amp = Math.exp(-lat / (W * 0.16));              // lateral falloff
+    return { x, y, tTrig: T.flash + d / ev.c, amp, trig: amp > 0.06 };
+  });
+  ev.hud.nsd = tanks.filter(t => t.trig).length + ' stations';
 
-      // End depth: muons reach ground, EM particles attenuate earlier
-      const maxEnd = isMuon
-        ? sGround * (0.92 + Math.random() * 0.08)
-        : sGround * (0.55 + Math.random() * 0.38);
-      const s1 = Math.max(s0 + sGround * 0.05, maxEnd);
+  fdSite = { x: W * 0.10, y: earthY };
+}
 
-      // Transverse spread widens with depth
-      // Cone half-angle: EM ~5°, muons ~2° (muons are more forward)
-      const coneAngle = (isMuon ? 3 : 6) * Math.PI / 180;
-      const maxSpread = sGround * Math.tan(coneAngle);
-      const r0 = (Math.random() - 0.5) * 2 * maxSpread * (s0 / sGround);
-      const r1 = (Math.random() - 0.5) * 2 * maxSpread * (s1 / sGround);
+// ═══════════════════════ Stars ═══════════════════════
+function buildStars() {
+  const n = Math.floor(W * H / 3800);
+  stars = Array.from({ length: n }, () => ({
+    x: Math.random() * W,
+    y: Math.random() * H * 0.55,
+    r: Math.random() < 0.06 ? rand(1.2, 1.9) : rand(0.3, 1.1),
+    ph: Math.random() * TAU,
+    sp: rand(0.5, 2.4),
+    warm: Math.random() < 0.18,
+  }));
+}
 
-      const x1 = ix + udx * s0 + pdx * r0;
-      const y1 = iy + udy * s0 + pdy * r0;
-      const x2 = ix + udx * s1 + pdx * r1;
-      const y2 = iy + udy * s1 + pdy * r1;
+// ═══════════════════════ Prerendered background ═══════════════════════
+function buildBackground() {
+  bg = document.createElement('canvas');
+  bg.width = W * dpr; bg.height = H * dpr;
+  const b = bg.getContext('2d');
+  b.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const earthY = ev.earthY;
 
-      // Colors
-      let hue, sat, light, alpha;
-      if (isMuon) {
-        hue   = 15 + Math.random() * 25;
-        sat   = 100;
-        light = 60 + Math.random() * 20;
-        alpha = 0.55 + Math.random() * 0.3;
-      } else {
-        hue   = 195 + Math.random() * 45;
-        sat   = 90 + Math.random() * 10;
-        light = 70 + Math.random() * 20;
-        alpha = 0.25 + Math.random() * 0.45;
-      }
+  // Sky
+  const sky = b.createLinearGradient(0, 0, 0, earthY);
+  sky.addColorStop(0.00, '#000004');
+  sky.addColorStop(0.30, '#020818');
+  sky.addColorStop(0.60, '#04122e');
+  sky.addColorStop(0.85, '#082048');
+  sky.addColorStop(1.00, '#0c2c5e');
+  b.fillStyle = sky;
+  b.fillRect(0, 0, W, earthY);
 
-      showerTracks.push({
-        x1, y1, x2, y2, s0, s1, sGround,
-        color: `hsl(${hue},${sat}%,${light}%)`,
-        alpha,
-        width: isMuon ? 1.4 + Math.random() * 0.4 : 0.6 + Math.random() * 0.6,
-        isMuon,
+  // Milky Way band (diagonal soft glow + blobs)
+  b.save();
+  b.translate(W * 0.35, H * 0.22);
+  b.rotate(-0.5);
+  const mw = b.createLinearGradient(0, -H * 0.14, 0, H * 0.14);
+  mw.addColorStop(0, 'rgba(120,140,190,0)');
+  mw.addColorStop(0.5, 'rgba(150,170,215,0.10)');
+  mw.addColorStop(1, 'rgba(120,140,190,0)');
+  b.fillStyle = mw;
+  b.fillRect(-W, -H * 0.14, W * 2, H * 0.28);
+  for (let i = 0; i < 90; i++) {
+    const x = rand(-W * 0.9, W * 0.9);
+    const y = gauss() * H * 0.06;
+    const r = rand(6, 34);
+    const g = b.createRadialGradient(x, y, 0, x, y, r);
+    const warm = Math.random() < 0.25;
+    g.addColorStop(0, warm ? 'rgba(200,180,160,0.055)' : 'rgba(160,180,230,0.06)');
+    g.addColorStop(1, 'rgba(0,0,0,0)');
+    b.fillStyle = g;
+    b.beginPath(); b.arc(x, y, r, 0, TAU); b.fill();
+  }
+  b.restore();
+
+  // Distant mountain ridges
+  const ridge = (base, rough, color) => {
+    b.beginPath();
+    b.moveTo(-10, earthY);
+    let y = base + rand(-10, 10);
+    for (let x = -10; x <= W + 10; x += 22) {
+      y += rand(-rough, rough);
+      y = clamp(y, base - rough * 4, base + rough * 2.2);
+      b.lineTo(x, y);
+    }
+    b.lineTo(W + 10, earthY);
+    b.closePath();
+    b.fillStyle = color;
+    b.fill();
+  };
+  ridge(earthY - H * 0.055, 7, '#071a30');
+  ridge(earthY - H * 0.028, 5, '#06121f');
+
+  // Ground (dark pampa)
+  const gnd = b.createLinearGradient(0, earthY, 0, H);
+  gnd.addColorStop(0, '#101d10');
+  gnd.addColorStop(0.4, '#0b150b');
+  gnd.addColorStop(1, '#050b05');
+  b.fillStyle = gnd;
+  b.fillRect(0, earthY, W, H - earthY);
+
+  // Horizon haze
+  const hz = b.createLinearGradient(0, earthY - 26, 0, earthY);
+  hz.addColorStop(0, 'rgba(60,110,180,0)');
+  hz.addColorStop(1, 'rgba(70,120,190,0.10)');
+  b.fillStyle = hz;
+  b.fillRect(0, earthY - 26, W, 26);
+
+  // Scattered grass tufts
+  b.strokeStyle = 'rgba(30,60,30,0.5)';
+  b.lineWidth = 1;
+  for (let i = 0; i < W / 6; i++) {
+    const x = Math.random() * W;
+    const y = earthY + rand(6, H - earthY - 8);
+    b.beginPath();
+    b.moveTo(x, y);
+    b.lineTo(x + rand(-1.5, 1.5), y - rand(2, 5));
+    b.stroke();
+  }
+
+  // ── Water-Cherenkov tanks (static bodies) ──
+  tanks.forEach(t => drawTankBody(b, t.x, t.y));
+
+  // ── Fluorescence telescope building ──
+  drawFDBuilding(b, fdSite.x, fdSite.y);
+}
+
+function drawTankBody(g, x, y) {
+  const w = clamp(W / 90, 11, 17), h = w * 0.62;
+  // shadow
+  g.beginPath();
+  g.ellipse(x, y + h * 0.55, w * 0.85, h * 0.22, 0, 0, TAU);
+  g.fillStyle = 'rgba(0,0,0,0.45)';
+  g.fill();
+  // cylinder body
+  const body = g.createLinearGradient(x - w / 2, 0, x + w / 2, 0);
+  body.addColorStop(0, '#5a4f38');
+  body.addColorStop(0.35, '#8a7a58');
+  body.addColorStop(0.65, '#9c8b66');
+  body.addColorStop(1, '#4e442f');
+  g.fillStyle = body;
+  g.fillRect(x - w / 2, y - h * 0.4, w, h);
+  // top ellipse
+  g.beginPath();
+  g.ellipse(x, y - h * 0.4, w / 2, h * 0.20, 0, 0, TAU);
+  g.fillStyle = '#a49470';
+  g.fill();
+  // solar panel + mast
+  g.strokeStyle = '#3c465a';
+  g.lineWidth = 1;
+  g.beginPath();
+  g.moveTo(x + w * 0.28, y - h * 0.4);
+  g.lineTo(x + w * 0.28, y - h * 1.15);
+  g.stroke();
+  g.save();
+  g.translate(x + w * 0.28, y - h * 1.15);
+  g.rotate(-0.5);
+  g.fillStyle = '#1e3050';
+  g.fillRect(-w * 0.30, -w * 0.16, w * 0.6, w * 0.30);
+  g.strokeStyle = 'rgba(120,160,220,0.35)';
+  g.strokeRect(-w * 0.30, -w * 0.16, w * 0.6, w * 0.30);
+  g.restore();
+}
+
+function drawFDBuilding(g, x, y) {
+  const w = clamp(W / 26, 40, 64), h = w * 0.42;
+  // mound
+  g.beginPath();
+  g.ellipse(x, y + 2, w * 1.1, h * 0.3, 0, Math.PI, TAU);
+  g.fillStyle = '#0d180d';
+  g.fill();
+  // building
+  const bd = g.createLinearGradient(x - w / 2, 0, x + w / 2, 0);
+  bd.addColorStop(0, '#232a33');
+  bd.addColorStop(0.5, '#39434f');
+  bd.addColorStop(1, '#1c222a');
+  g.fillStyle = bd;
+  g.fillRect(x - w / 2, y - h, w, h);
+  // roof
+  g.beginPath();
+  g.moveTo(x - w / 2 - 3, y - h);
+  g.lineTo(x, y - h - w * 0.13);
+  g.lineTo(x + w / 2 + 3, y - h);
+  g.closePath();
+  g.fillStyle = '#2c333d';
+  g.fill();
+  // telescope bay doors (open, glowing faint)
+  const bw = w * 0.16;
+  for (let i = 0; i < 3; i++) {
+    const bx = x - w * 0.30 + i * w * 0.30;
+    g.fillStyle = 'rgba(30,45,70,0.9)';
+    g.fillRect(bx - bw / 2, y - h * 0.78, bw, h * 0.62);
+    g.fillStyle = 'rgba(90,140,210,0.20)';
+    g.fillRect(bx - bw / 2 + 1, y - h * 0.78 + 1, bw - 2, h * 0.62 - 2);
+  }
+}
+
+// ═══════════════════════ Dynamic drawing ═══════════════════════
+
+function drawStars(t) {
+  ctx.save();
+  stars.forEach(s => {
+    const a = 0.30 + 0.42 * Math.sin(s.ph + t * s.sp);
+    if (a <= 0.02) return;
+    ctx.fillStyle = s.warm
+      ? 'rgba(255,225,190,' + a.toFixed(3) + ')'
+      : 'rgba(230,240,255,' + a.toFixed(3) + ')';
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, s.r, 0, TAU);
+    ctx.fill();
+  });
+  ctx.restore();
+}
+
+function drawPrimary(t) {
+  const p = phase(t, T.prim0, T.prim1);
+  if (p <= 0 || p >= 1) return;
+  const { ix, iy, udx, udy, BACK } = ev;
+  const cx = ix - udx * BACK * (1 - p);
+  const cy = iy - udy * BACK * (1 - p);
+
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+
+  // trail
+  const tl = Math.min(BACK * p, BACK * 0.5);
+  const tx = cx - udx * tl, ty = cy - udy * tl;
+  const tg = ctx.createLinearGradient(tx, ty, cx, cy);
+  tg.addColorStop(0, 'rgba(70,140,255,0)');
+  tg.addColorStop(0.6, 'rgba(150,200,255,0.30)');
+  tg.addColorStop(1, 'rgba(255,255,255,0.9)');
+  ctx.strokeStyle = tg;
+  ctx.lineWidth = 2.4;
+  ctx.beginPath(); ctx.moveTo(tx, ty); ctx.lineTo(cx, cy); ctx.stroke();
+
+  // halo
+  const halo = ctx.createRadialGradient(cx, cy, 0, cx, cy, 16);
+  halo.addColorStop(0, 'rgba(255,255,255,0.95)');
+  halo.addColorStop(0.3, 'rgba(170,215,255,0.55)');
+  halo.addColorStop(1, 'rgba(70,140,255,0)');
+  ctx.fillStyle = halo;
+  ctx.beginPath(); ctx.arc(cx, cy, 16, 0, TAU); ctx.fill();
+
+  // diffraction cross
+  ctx.strokeStyle = 'rgba(220,240,255,0.5)';
+  ctx.lineWidth = 0.8;
+  ctx.beginPath();
+  ctx.moveTo(cx - 10, cy); ctx.lineTo(cx + 10, cy);
+  ctx.moveTo(cx, cy - 10); ctx.lineTo(cx, cy + 10);
+  ctx.stroke();
+
+  ctx.restore();
+}
+
+function drawFlash(t) {
+  const dt = t - T.flash;
+  if (dt < 0 || dt > 0.9) return;
+  const { ix, iy } = ev;
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+
+  // core flash
+  const a = dt < 0.12 ? dt / 0.12 : Math.max(0, 1 - (dt - 0.12) / 0.5);
+  if (a > 0) {
+    const r = 40 + dt * 90;
+    const g = ctx.createRadialGradient(ix, iy, 0, ix, iy, r);
+    g.addColorStop(0, 'rgba(255,255,255,' + (a * 0.95).toFixed(3) + ')');
+    g.addColorStop(0.25, 'rgba(190,225,255,' + (a * 0.6).toFixed(3) + ')');
+    g.addColorStop(1, 'rgba(80,150,255,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(ix, iy, r, 0, TAU); ctx.fill();
+  }
+
+  // expanding shock ring
+  const ra = Math.max(0, 1 - dt / 0.9);
+  ctx.strokeStyle = 'rgba(160,210,255,' + (ra * 0.5).toFixed(3) + ')';
+  ctx.lineWidth = 1.4;
+  ctx.beginPath();
+  ctx.arc(ix, iy, dt * 260, 0, TAU);
+  ctx.stroke();
+
+  ctx.restore();
+}
+
+function frontS(t) { return clamp((t - T.flash) * ev.c, 0, ev.S); }
+
+function drawFluorescence(t) {
+  if (t < T.flash) return;
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  fluoStrips.forEach(f => {
+    if (t < f.tPass) return;
+    const decay = Math.exp(-(t - f.tPass) / 1.5);
+    const inten = GH(f.s / ev.S, ev.xmaxFrac, ev.lam) / ev.ghMax;
+    const a = 0.16 * inten * decay;
+    if (a < 0.004) return;
+    const [x, y] = toXY(f.s, 0);
+    const r = f.w * 1.7 + 14;
+    const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+    g.addColorStop(0, 'rgba(150,140,255,' + a.toFixed(3) + ')');
+    g.addColorStop(0.5, 'rgba(110,120,240,' + (a * 0.5).toFixed(3) + ')');
+    g.addColorStop(1, 'rgba(80,90,220,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(x, y, r, 0, TAU); ctx.fill();
+  });
+  ctx.restore();
+}
+
+function drawTracks(t, master) {
+  const sF = frontS(t);
+  if (sF <= 0) return;
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  tracks.forEach(tr => {
+    if (tr.s0 > sF) return;
+    const f = clamp((sF - tr.s0) / (tr.s1 - tr.s0), 0, 1);
+    let a = tr.alpha * master;
+    // EM tracks attenuate after the front passes them
+    if (tr.kind === 'em' && sF > tr.s1) {
+      a *= Math.exp(-(sF - tr.s1) / (ev.S * 0.22));
+    }
+    if (a < 0.01) return;
+    ctx.strokeStyle = tr.color;
+    ctx.globalAlpha = a;
+    ctx.lineWidth = tr.width;
+    ctx.beginPath();
+    ctx.moveTo(tr.x1, tr.y1);
+    ctx.lineTo(lerp(tr.x1, tr.x2, f), lerp(tr.y1, tr.y2, f));
+    ctx.stroke();
+  });
+  ctx.restore();
+}
+
+// Spherical shower front — arc centered on the first-interaction point
+function drawFront(t) {
+  const sF = frontS(t);
+  if (sF <= 6 || sF >= ev.S * 0.995) return;
+  const axAng = Math.atan2(ev.udy, ev.udx);
+  const half = Math.atan(latW(sF) / sF) * 1.5;
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  [[5, 0.10], [2.4, 0.28], [1.1, 0.6]].forEach(([lw, a]) => {
+    ctx.strokeStyle = 'rgba(200,230,255,' + a + ')';
+    ctx.lineWidth = lw;
+    ctx.beginPath();
+    ctx.arc(ev.ix, ev.iy, sF, axAng - half, axAng + half);
+    ctx.stroke();
+  });
+  ctx.restore();
+}
+
+// ── Spark cloud around the moving front (density ∝ GH profile) ──
+function updateSparks(t, dt) {
+  const sF = frontS(t);
+  if (sF > 0 && sF < ev.S) {
+    const inten = GH(sF / ev.S, ev.xmaxFrac, ev.lam) / ev.ghMax;
+    let n = Math.min(10, Math.round(240 * inten * dt));
+    while (n-- > 0 && sparks.length < 420) {
+      const r = gauss() * latW(sF) * 0.6;
+      const [x, y] = toXY(sF - rand(0, 20), r);
+      sparks.push({
+        x, y,
+        vx: ev.udx * ev.c * rand(0.1, 0.35) + gauss() * 24,
+        vy: ev.udy * ev.c * rand(0.1, 0.35) + gauss() * 24,
+        life: rand(0.3, 0.7), age: 0,
+        r: rand(0.6, 2.0),
+        blue: Math.random() < 0.85,
       });
     }
   }
+  sparks = sparks.filter(p => (p.age += dt) < p.life);
+  sparks.forEach(p => { p.x += p.vx * dt; p.y += p.vy * dt; });
+}
 
-  // ── Detectors ─────────────────────────────────────────────────────────────
-  function buildDetectors() {
-    const { earthY, groundX } = geo;
-    const spacing = Math.max(45, Math.min(70, W / 28));
-    const n = Math.ceil(W / spacing) + 1;
-    const surfY = earthY + (H - earthY) * 0.22;
+function drawSparks(master) {
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  sparks.forEach(p => {
+    const a = (1 - p.age / p.life) * 0.55 * master;
+    if (a < 0.01 || p.y > ev.earthY) return;
+    ctx.fillStyle = p.blue
+      ? 'rgba(170,215,255,' + a.toFixed(3) + ')'
+      : 'rgba(255,240,200,' + a.toFixed(3) + ')';
+    ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, TAU); ctx.fill();
+  });
+  ctx.restore();
+}
 
-    detectors = Array.from({ length: n }, (_, i) => {
-      const x = (i + 0.5) * (W / n);
-      const dist = Math.abs(x - groundX);
-      const delay = (dist / (W * 0.6)) * 0.9;
-      return {
-        x, y: surfY + (Math.random() - 0.5) * 12,
-        delay: clamp(delay, 0, 1),
-        lit: 0,
-      };
-    });
+// ── Ground impact: core splash + flash ──
+function updateSplash(t, dt) {
+  const dtg = t - T.ground;
+  if (dtg > 0 && dtg < 0.25 && splash.length < 60) {
+    for (let i = 0; i < 6; i++) {
+      splash.push({
+        x: ev.coreX + gauss() * 14, y: ev.earthY,
+        vx: gauss() * 90, vy: -rand(30, 130),
+        life: rand(0.3, 0.8), age: 0,
+      });
+    }
   }
+  splash = splash.filter(p => (p.age += dt) < p.life);
+  splash.forEach(p => {
+    p.x += p.vx * dt; p.y += p.vy * dt; p.vy += 260 * dt;
+  });
+}
 
-  // ── Draw: background ──────────────────────────────────────────────────────
-  function drawBackground() {
-    const { earthY } = geo;
+function drawImpact(t, master) {
+  const dtg = t - T.ground;
+  if (dtg < 0) return;
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
 
-    // Space
-    const spaceGr = ctx.createLinearGradient(0, 0, 0, H * 0.28);
-    spaceGr.addColorStop(0,   '#000005');
-    spaceGr.addColorStop(1,   '#00102e');
-    ctx.fillStyle = spaceGr;
-    ctx.fillRect(0, 0, W, H * 0.28);
-
-    // Atmosphere
-    const atmGr = ctx.createLinearGradient(0, H * 0.20, 0, earthY);
-    atmGr.addColorStop(0,    '#00102e');
-    atmGr.addColorStop(0.12, '#001540');
-    atmGr.addColorStop(0.35, '#001f5c');
-    atmGr.addColorStop(0.65, '#002f78');
-    atmGr.addColorStop(1,    '#00419e');
-    ctx.fillStyle = atmGr;
-    ctx.fillRect(0, H * 0.20, W, earthY - H * 0.20);
-
-    // Subtle atmosphere layer bands
-    const bands = [0.18, 0.36, 0.62];
-    bands.forEach(f => {
-      const y = H * 0.20 + (earthY - H * 0.20) * f;
-      ctx.beginPath();
-      ctx.moveTo(0, y); ctx.lineTo(W, y);
-      ctx.strokeStyle = 'rgba(80,140,220,0.08)';
-      ctx.lineWidth = 1;
-      ctx.stroke();
-    });
-
-    // Earth surface
-    const earthGr = ctx.createLinearGradient(0, earthY, 0, H);
-    earthGr.addColorStop(0,   '#19431a');
-    earthGr.addColorStop(0.3, '#163614');
-    earthGr.addColorStop(1,   '#0d240d');
-    ctx.fillStyle = earthGr;
-    ctx.fillRect(0, earthY, W, H - earthY);
-
-    // Horizon glow
-    const hGr = ctx.createLinearGradient(0, earthY - 12, 0, earthY + 8);
-    hGr.addColorStop(0, 'rgba(0,70,160,0)');
-    hGr.addColorStop(0.6, 'rgba(0,55,130,0.18)');
-    hGr.addColorStop(1, 'rgba(10,60,10,0)');
-    ctx.fillStyle = hGr;
-    ctx.fillRect(0, earthY - 12, W, 20);
-  }
-
-  // ── Draw: layer labels ────────────────────────────────────────────────────
-  function drawLayerLabels(alpha) {
-    if (alpha <= 0) return;
-    const { earthY } = geo;
-    const atmH = earthY - H * 0.20;
-
-    ctx.save();
-    ctx.globalAlpha = alpha * 0.65;
-    ctx.font = '10px "Courier New", monospace';
-    ctx.fillStyle = 'rgba(100,165,230,1)';
-    ctx.textAlign = 'left';
-
-    const items = [
-      { f: -0.5,  label: '── SPACE' },
-      { f: 0.05,  label: '── MESOSPHERE  ~80 km' },
-      { f: 0.22,  label: '── STRATOSPHERE  ~50 km' },
-      { f: 0.55,  label: '── TROPOSPHERE  ~12 km' },
-    ];
-    items.forEach(({ f, label }) => {
-      const y = H * 0.20 + atmH * f;
-      if (y < 60 || y > earthY - 10) return;
-      ctx.fillText(label, 14, y + 4);
-    });
-
-    // Earth surface label
-    ctx.fillText('── EARTH SURFACE', 14, earthY + (H - earthY) * 0.28);
-    ctx.restore();
-  }
-
-  // ── Draw: stars ───────────────────────────────────────────────────────────
-  function drawStars(t) {
-    stars.forEach(s => {
-      const a = 0.35 + 0.45 * Math.sin(s.ph + t * s.sp);
-      ctx.beginPath();
-      ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
-      ctx.fillStyle = `rgba(255,255,255,${a.toFixed(3)})`;
-      ctx.fill();
-    });
-  }
-
-  // ── Draw: UHECR particle ──────────────────────────────────────────────────
-  function drawUHECR(progress) {
-    if (progress <= 0) return;
-    const { ox, oy, ix, iy, udx, udy, BACK } = geo;
-    const totalLen = BACK;
-    const cx = ox + udx * progress * totalLen;
-    const cy = oy + udy * progress * totalLen;
-
-    // Trail
-    const trailLen = Math.min(progress * totalLen, totalLen * 0.45);
-    const tx = cx - udx * trailLen;
-    const ty = cy - udy * trailLen;
-
-    const trailGr = ctx.createLinearGradient(tx, ty, cx, cy);
-    trailGr.addColorStop(0, 'rgba(80,160,255,0)');
-    trailGr.addColorStop(0.5, 'rgba(160,210,255,0.25)');
-    trailGr.addColorStop(1, 'rgba(255,255,255,0.85)');
-    ctx.beginPath();
-    ctx.moveTo(tx, ty);
-    ctx.lineTo(cx, cy);
-    ctx.strokeStyle = trailGr;
-    ctx.lineWidth = 2.2;
-    ctx.stroke();
-
-    // Glow halo
-    const glow = ctx.createRadialGradient(cx, cy, 0, cx, cy, 14);
-    glow.addColorStop(0, 'rgba(255,255,255,0.95)');
-    glow.addColorStop(0.25, 'rgba(180,220,255,0.6)');
-    glow.addColorStop(1, 'rgba(80,150,255,0)');
-    ctx.beginPath();
-    ctx.arc(cx, cy, 14, 0, Math.PI * 2);
-    ctx.fillStyle = glow;
-    ctx.fill();
-
-    // Core
-    ctx.beginPath();
-    ctx.arc(cx, cy, 2.5, 0, Math.PI * 2);
-    ctx.fillStyle = '#ffffff';
-    ctx.fill();
-  }
-
-  // ── Draw: first-interaction flash ─────────────────────────────────────────
-  function drawFlash(a) {
-    if (a <= 0) return;
-    const { ix, iy } = geo;
-    const r = 50 + 30 * a;
-    const g = ctx.createRadialGradient(ix, iy, 0, ix, iy, r);
-    g.addColorStop(0, `rgba(255,255,255,${a})`);
-    g.addColorStop(0.2, `rgba(200,230,255,${a * 0.7})`);
-    g.addColorStop(1, 'rgba(80,150,255,0)');
-    ctx.beginPath();
-    ctx.arc(ix, iy, r, 0, Math.PI * 2);
+  // ground flash
+  const fa = Math.max(0, 1 - dtg / 0.9) * master;
+  if (fa > 0.01) {
+    const g = ctx.createRadialGradient(ev.coreX, ev.earthY, 0, ev.coreX, ev.earthY, 110);
+    g.addColorStop(0, 'rgba(200,230,255,' + (fa * 0.5).toFixed(3) + ')');
+    g.addColorStop(1, 'rgba(100,160,255,0)');
     ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.ellipse(ev.coreX, ev.earthY, 110, 26, 0, Math.PI, TAU);
     ctx.fill();
   }
 
-  // ── Draw: air shower ──────────────────────────────────────────────────────
-  function drawShower(progress) {
-    if (progress <= 0) return;
-    const { ix, iy, udx, udy, pdx, pdy, sGround } = geo;
-    const sFront = progress * sGround;
+  // splash sparks
+  splash.forEach(p => {
+    const a = (1 - p.age / p.life) * 0.7 * master;
+    if (a < 0.01) return;
+    ctx.fillStyle = 'rgba(190,225,255,' + a.toFixed(3) + ')';
+    ctx.beginPath(); ctx.arc(p.x, p.y, 1.1, 0, TAU); ctx.fill();
+  });
+  ctx.restore();
+}
 
-    ctx.save();
-    showerTracks.forEach(tr => {
-      if (tr.s0 > sFront) return;
-      const frac = clamp((sFront - tr.s0) / (tr.s1 - tr.s0), 0, 1);
-      if (frac <= 0) return;
+// ── Tank triggers: Cherenkov glow, ripple ring, signal spike ──
+function drawTankSignals(t, master) {
+  ctx.save();
+  tanks.forEach(tk => {
+    if (!tk.trig) return;
+    const dt = t - tk.tTrig;
+    if (dt < 0) return;
+    const w = clamp(W / 90, 11, 17), h = w * 0.62;
+    const A = tk.amp * master;
 
-      const vx2 = lerp(tr.x1, tr.x2, frac);
-      const vy2 = lerp(tr.y1, tr.y2, frac);
+    ctx.globalCompositeOperation = 'lighter';
 
+    // water Cherenkov glow inside the tank
+    const glow = Math.exp(-dt / 0.9) * A;
+    if (glow > 0.015) {
+      const g = ctx.createRadialGradient(tk.x, tk.y - h * 0.1, 0, tk.x, tk.y - h * 0.1, w * 1.8);
+      g.addColorStop(0, 'rgba(80,220,255,' + (glow * 0.85).toFixed(3) + ')');
+      g.addColorStop(0.4, 'rgba(60,180,255,' + (glow * 0.4).toFixed(3) + ')');
+      g.addColorStop(1, 'rgba(40,140,255,0)');
+      ctx.fillStyle = g;
+      ctx.beginPath(); ctx.arc(tk.x, tk.y - h * 0.1, w * 1.8, 0, TAU); ctx.fill();
+    }
+
+    // expanding ripple ring on the ground
+    if (dt < 1.1) {
+      const ra = (1 - dt / 1.1) * A * 0.6;
+      ctx.strokeStyle = 'rgba(90,220,255,' + ra.toFixed(3) + ')';
+      ctx.lineWidth = 1;
       ctx.beginPath();
-      ctx.moveTo(tr.x1, tr.y1);
-      ctx.lineTo(vx2, vy2);
-      ctx.strokeStyle = tr.color;
-      ctx.globalAlpha = tr.alpha * Math.min(progress * 4, 1);
-      ctx.lineWidth = tr.width;
+      ctx.ellipse(tk.x, tk.y + h * 0.3, dt * 60 + 4, (dt * 60 + 4) * 0.28, 0, 0, TAU);
       ctx.stroke();
+    }
+
+    // signal spike (oscilloscope-style trace above the tank)
+    if (dt < 1.6) {
+      const sa = Math.exp(-dt / 0.7) * A;
+      const sh = 6 + 26 * A;
+      ctx.strokeStyle = 'rgba(120,255,190,' + (sa * 0.9).toFixed(3) + ')';
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.moveTo(tk.x - 7, tk.y - h * 1.5);
+      ctx.lineTo(tk.x - 2, tk.y - h * 1.5);
+      ctx.lineTo(tk.x, tk.y - h * 1.5 - sh);
+      ctx.lineTo(tk.x + 2.5, tk.y - h * 1.5 + 3);
+      ctx.lineTo(tk.x + 4, tk.y - h * 1.5);
+      ctx.lineTo(tk.x + 9, tk.y - h * 1.5);
+      ctx.stroke();
+    }
+  });
+  ctx.restore();
+}
+
+// ── FD telescope field-of-view, brightens as the shower crosses it ──
+function drawFDView(t, master) {
+  const sF = frontS(t);
+  const inten = t > T.flash
+    ? GH(clamp(sF / ev.S, 0, 1), ev.xmaxFrac, ev.lam) / ev.ghMax * (sF < ev.S ? 1 : Math.exp(-(t - T.ground) / 1.2))
+    : 0;
+  const a = (0.05 + inten * 0.30) * master * ease(phase(t, T.flash, T.flash + 1));
+  if (a < 0.01) return;
+
+  // wedge aimed at the shower's mid-axis
+  const [mx, my] = toXY(ev.S * ev.xmaxFrac, 0);
+  const ang = Math.atan2(my - fdSite.y, mx - fdSite.x);
+  const spread = 0.16;
+  const R = Math.hypot(mx - fdSite.x, my - fdSite.y) * 1.25;
+
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  const g = ctx.createRadialGradient(fdSite.x, fdSite.y - 8, 0, fdSite.x, fdSite.y - 8, R);
+  g.addColorStop(0, 'rgba(140,170,255,' + (a * 0.9).toFixed(3) + ')');
+  g.addColorStop(0.5, 'rgba(120,150,255,' + (a * 0.35).toFixed(3) + ')');
+  g.addColorStop(1, 'rgba(100,130,255,0)');
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  ctx.moveTo(fdSite.x, fdSite.y - 8);
+  ctx.arc(fdSite.x, fdSite.y - 8, R, ang - spread, ang + spread);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+}
+
+// ═══════════════════════ Labels & HUD ═══════════════════════
+function mono(size, weight) {
+  ctx.font = (weight ? weight + ' ' : '') + size + 'px "Courier New", monospace';
+}
+
+function drawLabels(t, master) {
+  ctx.save();
+  const { ix, iy, earthY, S, udx, udy } = ev;
+
+  // atmosphere layer ticks
+  const la = master * 0.5 * ease(phase(t, 0.3, 1.4));
+  if (la > 0.01) {
+    ctx.globalAlpha = la;
+    mono(10);
+    ctx.fillStyle = 'rgba(110,170,235,1)';
+    ctx.textAlign = 'left';
+    [[0.16, '~ 30 km'], [0.42, '~ 15 km'], [0.68, '~ 5 km']].forEach(([f, lb]) => {
+      const y = iy + (earthY - iy) * f;
+      ctx.fillRect(12, y, 16, 1);
+      ctx.fillText(lb, 34, y + 3.5);
     });
-    ctx.restore();
-
-    // Shower front disc
-    if (progress < 0.97) {
-      const fxC = ix + udx * sFront;
-      const fyC = iy + udy * sFront;
-      // Perpendicular half-width at this depth
-      const hw = sFront * Math.tan(7 * Math.PI / 180);
-      const x1 = fxC + pdx * hw, y1 = fyC + pdy * hw;
-      const x2 = fxC - pdx * hw, y2 = fyC - pdy * hw;
-      const frontGr = ctx.createLinearGradient(x1, y1, x2, y2);
-      frontGr.addColorStop(0,   'rgba(100,180,255,0)');
-      frontGr.addColorStop(0.25,'rgba(160,210,255,0.5)');
-      frontGr.addColorStop(0.5, 'rgba(220,240,255,0.85)');
-      frontGr.addColorStop(0.75,'rgba(160,210,255,0.5)');
-      frontGr.addColorStop(1,   'rgba(100,180,255,0)');
-      ctx.beginPath();
-      ctx.moveTo(x1, y1); ctx.lineTo(x2, y2);
-      ctx.strokeStyle = frontGr;
-      ctx.lineWidth = 2;
-      ctx.stroke();
-    }
   }
 
-  // ── Draw: surface detectors ───────────────────────────────────────────────
-  function drawDetectors(detP) {
-    detectors.forEach(d => {
-      const p = ease(clamp((detP - d.delay) / 0.18, 0, 1));
+  // primary label
+  const pp = phase(t, T.prim0, T.prim1);
+  const pa = ease(phase(t, T.prim0 + 0.25, T.prim0 + 0.9)) * (1 - phase(t, T.prim1 - 0.25, T.prim1 + 0.2)) * master;
+  if (pa > 0.01 && pp > 0 && pp < 1) {
+    const cx = ix - udx * ev.BACK * (1 - pp);
+    const cy = iy - udy * ev.BACK * (1 - pp);
+    ctx.globalAlpha = pa;
+    mono(11, 'bold');
+    ctx.fillStyle = 'rgba(255,255,210,0.95)';
+    ctx.textAlign = 'left';
+    ctx.fillText('PRIMARY  (UHECR)', cx + 46, cy - 20);
+    mono(10);
+    ctx.fillStyle = 'rgba(255,240,170,0.8)';
+    ctx.fillText('E ≳ 10¹⁸ eV', cx + 46, cy - 6);
+  }
 
-      // Base station
-      ctx.beginPath();
-      ctx.rect(d.x - 5, d.y - 3, 10, 6);
-      ctx.fillStyle = `rgba(40,90,40,${0.55 + p * 0.35})`;
-      ctx.fill();
-      ctx.strokeStyle = `rgba(60,130,60,${0.6 + p * 0.35})`;
-      ctx.lineWidth = 0.6;
-      ctx.stroke();
+  // first interaction
+  const fa = ease(phase(t, T.flash, T.flash + 0.5)) * (1 - ease(phase(t, T.flash + 1.6, T.flash + 2.4))) * master;
+  if (fa > 0.01) {
+    ctx.globalAlpha = fa;
+    mono(10);
+    ctx.fillStyle = 'rgba(235,245,255,0.95)';
+    ctx.textAlign = 'left';
+    ctx.fillText('FIRST INTERACTION (X₀)', ix + 24, iy - 12);
+  }
 
-      if (p > 0) {
-        // Glow
-        const gr = ctx.createRadialGradient(d.x, d.y, 0, d.x, d.y, 28 * p);
-        gr.addColorStop(0, `rgba(80,255,130,${0.65 * p})`);
-        gr.addColorStop(1, 'rgba(80,255,130,0)');
-        ctx.beginPath();
-        ctx.arc(d.x, d.y, 28 * p, 0, Math.PI * 2);
-        ctx.fillStyle = gr;
-        ctx.fill();
+  // Xmax marker — appears when the front passes it
+  const sXm = S * ev.xmaxFrac;
+  const tXm = T.flash + sXm / ev.c;
+  const xa = ease(phase(t, tXm, tXm + 0.5)) * master;
+  if (xa > 0.01) {
+    const wXm = latW(sXm);
+    const [x1, y1] = toXY(sXm, wXm + 10);
+    const [x2, y2] = toXY(sXm, wXm + 26);
+    ctx.globalAlpha = xa * 0.85;
+    ctx.strokeStyle = 'rgba(255,220,120,0.8)';
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+    mono(10, 'bold');
+    ctx.fillStyle = 'rgba(255,225,140,0.9)';
+    ctx.textAlign = x2 < W / 2 ? 'right' : 'left';
+    ctx.fillText('Xmax', x2 + (x2 < W / 2 ? -5 : 5), y2 + 4);
+  }
 
-        // Bright dot
-        ctx.beginPath();
-        ctx.arc(d.x, d.y, 2.5 * p, 0, Math.PI * 2);
-        ctx.fillStyle = `rgba(160,255,190,${p})`;
-        ctx.fill();
-      }
+  // component legend
+  const lg = ease(phase(t, T.flash + 1.6, T.flash + 2.6)) * master;
+  if (lg > 0.01) {
+    ctx.globalAlpha = lg;
+    ctx.textAlign = 'right';
+    const lx = W - 18;
+    let ly = H * 0.34;
+    mono(11, 'bold');
+    ctx.fillStyle = 'rgba(160,210,255,0.9)';
+    ctx.fillText('EXTENSIVE AIR SHOWER', lx, ly);
+    mono(10);
+    const rows = [
+      ['rgba(255,246,190,0.9)', 'hadronic core'],
+      ['rgba(140,195,255,0.9)', 'e± / γ  (electromagnetic)'],
+      ['rgba(255,150,90,0.9)',  'μ±  (muons → ground)'],
+    ];
+    rows.forEach(([col, txt]) => {
+      ly += 17;
+      ctx.fillStyle = col;
+      ctx.fillText(txt, lx, ly);
+      ctx.fillRect(lx - ctx.measureText(txt).width - 16, ly - 7, 9, 5);
     });
   }
 
-  // ── Draw: annotation labels ───────────────────────────────────────────────
-  function drawAnnotations(t) {
-    const { ix, iy, ox, oy, udx, udy, BACK, earthY } = geo;
-    ctx.save();
-
-    // UHECR label (follows particle)
-    const uP = phase(t, T_UHECR_0, T_UHECR_1);
-    const lblFadeOut = phase(t, T_UHECR_1 - 0.3, T_FLASH_END);
-    const uLblA = ease(phase(t, T_UHECR_0 + 0.3, T_UHECR_0 + 1.1)) * (1 - lblFadeOut);
-    if (uLblA > 0) {
-      const cx = ox + udx * uP * BACK;
-      const cy = oy + udy * uP * BACK;
-      const offX = 58, offY = -22;
-      ctx.globalAlpha = uLblA;
-      ctx.font = 'bold 11px "Courier New", monospace';
-      ctx.fillStyle = 'rgba(255,255,200,0.95)';
-      ctx.textAlign = 'left';
-      ctx.fillText('UHECR', cx + offX, cy + offY);
-      ctx.font = '10px "Courier New", monospace';
-      ctx.fillStyle = 'rgba(255,240,160,0.75)';
-      ctx.fillText('E ≳ 10¹⁸ eV', cx + offX, cy + offY + 15);
-    }
-
-    // "First Interaction" label at flash
-    const fiA = ease(phase(t, T_UHECR_1, T_FLASH_END)) * (1 - ease(phase(t, T_FLASH_END, T_SHOWER_0 + 0.4)));
-    if (fiA > 0) {
-      ctx.globalAlpha = fiA;
-      ctx.font = '10px "Courier New", monospace';
-      ctx.fillStyle = 'rgba(255,255,255,0.9)';
-      ctx.textAlign = 'left';
-      ctx.fillText('FIRST INTERACTION', ix + 20, iy - 16);
-    }
-
-    // Air shower labels
-    const shwA = ease(phase(t, T_SHOWER_0 + 1.0, T_SHOWER_1 - 0.2)) * (1 - ease(phase(t, T_FADE_0, T_FADE_1)));
-    if (shwA > 0) {
-      const midY = lerp(iy, earthY, 0.48);
-      ctx.globalAlpha = shwA;
-      ctx.textAlign = 'right';
-      ctx.font = 'bold 11px "Courier New", monospace';
-      ctx.fillStyle = 'rgba(150,205,255,0.9)';
-      ctx.fillText('EXTENSIVE AIR SHOWER', W - 16, midY - 6);
-      ctx.font = '10px "Courier New", monospace';
-      ctx.fillStyle = 'rgba(120,185,255,0.65)';
-      ctx.fillText('Electromagnetic component', W - 16, midY + 12);
-      ctx.fillStyle = 'rgba(255,140,90,0.65)';
-      ctx.fillText('Muonic component', W - 16, midY + 28);
-
-      // Small color swatches
-      ctx.fillStyle = 'rgba(120,185,255,0.65)';
-      ctx.fillRect(W - 16 - ctx.measureText('Electromagnetic component').width - 12, midY + 5, 8, 6);
-      ctx.fillStyle = 'rgba(255,140,90,0.65)';
-      ctx.fillRect(W - 16 - ctx.measureText('Muonic component').width - 12, midY + 21, 8, 6);
-    }
-
-    // Detector label
-    const detA = ease(phase(t, T_DET_0 + 0.8, T_DET_1)) * (1 - ease(phase(t, T_FADE_0, T_FADE_1)));
-    if (detA > 0) {
-      ctx.globalAlpha = detA;
-      ctx.textAlign = 'center';
-      ctx.font = 'bold 11px "Courier New", monospace';
-      ctx.fillStyle = 'rgba(100,255,150,0.85)';
-      ctx.fillText('SURFACE DETECTOR ARRAY', W / 2, earthY + (H - earthY) * 0.70);
-    }
-
-    ctx.restore();
+  // detector captions
+  const dc = ease(phase(t, T.ground + 0.4, T.ground + 1.2)) * master;
+  if (dc > 0.01) {
+    ctx.globalAlpha = dc * 0.8;
+    mono(10);
+    ctx.textAlign = 'center';
+    ctx.fillStyle = 'rgba(120,235,255,0.85)';
+    ctx.fillText('SURFACE DETECTOR ARRAY — WATER-CHERENKOV STATIONS', W / 2, earthY + (H - earthY) * 0.72);
+    ctx.fillStyle = 'rgba(150,170,255,0.8)';
+    ctx.fillText('FLUORESCENCE', fdSite.x, earthY + 16);
+    ctx.fillText('TELESCOPE', fdSite.x, earthY + 28);
   }
 
-  // ── Animation loop ────────────────────────────────────────────────────────
-  function frame(ts) {
-    if (!startTs) startTs = ts;
-    const t = ((ts - startTs) / 1000) % CYCLE;
+  ctx.restore();
+}
 
-    ctx.clearRect(0, 0, W, H);
-    drawBackground();
-    drawStars(t);
-    drawLayerLabels(ease(phase(t, 0, 1.0)) * (1 - ease(phase(t, T_FADE_0, T_FADE_1))));
+function drawHUD(t, master) {
+  const t0 = T.ground + 0.5;
+  const a0 = ease(phase(t, t0, t0 + 0.5)) * master;
+  if (a0 < 0.01) return;
 
-    // UHECR in flight
-    if (t < T_UHECR_1 + 0.1) {
-      drawUHECR(ease(phase(t, T_UHECR_0, T_UHECR_1)));
+  const lines = [
+    ['EVENT RECONSTRUCTION', null],
+    ['E      ' + ev.hud.energy, 0.30],
+    ['θ      ' + ev.hud.zenith, 0.55],
+    ['Xmax   ' + ev.hud.xmax, 0.80],
+    ['SD     ' + ev.hud.nsd, 1.05],
+    ['FD     1 telescope', 1.30],
+  ];
+
+  ctx.save();
+  ctx.textAlign = 'left';
+  const x = 16, lh = 16;
+  let y = H - 30 - lines.length * lh;
+
+  // panel
+  ctx.globalAlpha = a0 * 0.45;
+  ctx.fillStyle = 'rgba(2,12,24,0.85)';
+  ctx.fillRect(x - 8, y - 16, 240, lines.length * lh + 22);
+  ctx.strokeStyle = 'rgba(80,180,220,0.35)';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(x - 8, y - 16, 240, lines.length * lh + 22);
+
+  lines.forEach(([txt, delay], i) => {
+    const la = delay === null ? a0 : ease(phase(t, t0 + delay, t0 + delay + 0.3)) * master;
+    if (la < 0.01) return;
+    ctx.globalAlpha = la;
+    if (i === 0) {
+      mono(10, 'bold');
+      ctx.fillStyle = 'rgba(120,230,255,0.95)';
+    } else {
+      mono(11);
+      ctx.fillStyle = 'rgba(140,255,190,0.9)';
     }
+    ctx.fillText(txt, x, y + i * lh);
+  });
 
-    // Flash at interaction point
-    {
-      const fp = phase(t, T_UHECR_1, T_FLASH_END);
-      const fa = fp < 0.35 ? fp / 0.35 : 1 - (fp - 0.35) / 0.65;
-      drawFlash(clamp(fa, 0, 1));
-    }
+  // blinking cursor
+  const last = lines.length - 1;
+  if (phase(t, t0 + 1.3, t0 + 1.6) >= 1 && Math.floor(t * 2.4) % 2 === 0) {
+    ctx.globalAlpha = a0;
+    ctx.fillStyle = 'rgba(140,255,190,0.9)';
+    ctx.fillRect(x + 150, y + last * lh - 9, 7, 11);
+  }
+  ctx.restore();
+}
 
-    // Shower development
-    drawShower(ease(phase(t, T_SHOWER_0, T_SHOWER_1)) * (1 - ease(phase(t, T_FADE_0, T_FADE_1))));
+// ═══════════════════════ Main loop ═══════════════════════
+let prevT = 0;
 
-    // Detectors
-    drawDetectors(phase(t, T_DET_0, T_DET_1) * (1 - ease(phase(t, T_FADE_0, T_FADE_1))));
+function frame(ts) {
+  if (startTs === null) { startTs = ts; prevT = 0; }
+  const elapsed = (ts - startTs) / 1000;
+  const cyc = Math.floor(elapsed / CYCLE);
+  const t = elapsed % CYCLE;
+  const dt = Math.min(0.05, Math.max(0.001, t - prevT >= 0 ? t - prevT : 0.016));
+  prevT = t;
 
-    // Labels
-    drawAnnotations(t);
-
-    requestAnimationFrame(frame);
+  if (cyc !== lastCycle) {           // new event each loop
+    lastCycle = cyc;
+    buildEvent(); buildTracks(); buildFluo(); buildDetectors(); buildBackground();
+    sparks = []; splash = [];
   }
 
-  // ── Init / resize ─────────────────────────────────────────────────────────
-  function init() {
-    setupGeo();
-    buildStars();
-    buildShower();
-    buildDetectors();
-    startTs = null;
+  // master fade (in at start, out at end of cycle)
+  const master = ease(phase(t, T.in0, T.in1)) * (1 - ease(phase(t, T.fade0, T.fade1)));
+
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, W, H);
+  ctx.drawImage(bg, 0, 0, W, H);
+
+  drawStars(elapsed);
+  drawFluorescence(t);
+  drawFDView(t, master);
+  drawTracks(t, master);
+  updateSparks(t, dt);
+  drawSparks(master);
+  drawFront(t);
+  drawFlash(t);
+  drawPrimary(t);
+  updateSplash(t, dt);
+  drawImpact(t, master);
+  drawTankSignals(t, master);
+  drawLabels(t, master);
+  drawHUD(t, master);
+
+  // fade overlay
+  if (master < 1) {
+    ctx.fillStyle = 'rgba(0,0,0,' + (1 - master).toFixed(3) + ')';
+    ctx.fillRect(0, 0, W, H);
   }
 
-  window.addEventListener('resize', () => { init(); });
-
-  init();
   requestAnimationFrame(frame);
+}
+
+// ═══════════════════════ Init / resize ═══════════════════════
+function init() {
+  dpr = Math.min(2, window.devicePixelRatio || 1);
+  W = window.innerWidth;
+  H = window.innerHeight;
+  canvas.width = W * dpr;
+  canvas.height = H * dpr;
+  canvas.style.width = W + 'px';
+  canvas.style.height = H + 'px';
+
+  buildEvent();
+  buildStars();
+  buildTracks();
+  buildFluo();
+  buildDetectors();
+  buildBackground();
+  sparks = []; splash = [];
+  startTs = null; lastCycle = 0;
+}
+
+let rsz;
+window.addEventListener('resize', () => {
+  clearTimeout(rsz);
+  rsz = setTimeout(init, 150);
+});
+
+init();
+requestAnimationFrame(frame);
 })();
 </script>
 </body>
