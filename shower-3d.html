@@ -199,57 +199,203 @@ const spriteMat = (color, opacity) => new THREE.SpriteMaterial({
 });
 
 // ═══════════ Detector arrays (static bodies, dynamic glow) ═══════════
+// Scale: 76 scene units per km. Detector hardware is oversized for visibility;
+// the LAYOUT is to scale — Pierre Auger Observatory, Pampa Amarilla, Argentina.
+const KM = 76;
+
+// SD: water-Cherenkov tanks on the real 1500 m triangular grid, ~3000 km²
 const TANK_BASE = new THREE.Color(0x8a7a58);
 const TANK_HOT  = new THREE.Color(0x50ffff);
+const ARRAY_R = 2300;
 let tanksMesh, tankData = [];
 {
-  const geo = new THREE.CylinderGeometry(28, 28, 26, 14);
+  const geo = new THREE.CylinderGeometry(9, 9, 6, 10);
   const mat = new THREE.MeshLambertMaterial({ color: 0xffffff });
   const cells = [];
-  const SP = 330;
-  for (let i = -6; i <= 6; i++)
-    for (let j = -6; j <= 6; j++) {
-      const x = i * SP + rand(-30, 30), z = j * SP + rand(-30, 30);
-      if (Math.hypot(x, z) < 2300) cells.push([x, z]);
+  const SP = 1.5 * KM;                 // 1500 m spacing
+  const ROWH = SP * 0.8660254;         // triangular grid row height
+  for (let j = -22; j <= 22; j++)
+    for (let i = -22; i <= 22; i++) {
+      const x = i * SP + (j % 2 ? SP / 2 : 0);
+      const z = j * ROWH;
+      if (Math.hypot(x, z) < ARRAY_R) cells.push([x, z]);
     }
   tanksMesh = new THREE.InstancedMesh(geo, mat, cells.length);
   const m = new THREE.Matrix4();
   cells.forEach(([x, z], k) => {
-    m.setPosition(x, 13, z);
+    m.setPosition(x, 3, z);
     tanksMesh.setMatrixAt(k, m);
     tanksMesh.setColorAt(k, TANK_BASE);
-    tankData.push({ pos: new THREE.Vector3(x, 13, z), tTrig: 0, amp: 0 });
+    tankData.push({ pos: new THREE.Vector3(x, 3, z), tTrig: 0, amp: 0 });
   });
   scene.add(tanksMesh);
 }
 
-// radio antennas: cross masts + flash sprites
+// RD: radio antennas clustered like AERA, in the western part of the
+// array in front of Coihueco
+const AERA = new THREE.Vector3(-1450, 0, -580);
 let antData = [];
 {
   const mat = new THREE.LineBasicMaterial({ color: 0x3a4450 });
   const pts = [];
   const APOS = [];
-  for (let i = 0; i < 34; i++) {
-    const x = rand(-2100, 2100), z = rand(-2100, 2100);
-    if (Math.hypot(x, z) > 2200) { i--; continue; }
-    APOS.push([x, z]);
-    const h = 55;
-    pts.push(x, 0, z,  x, h, z);
-    pts.push(x - 20, h + 16, z,  x, h, z);
-    pts.push(x + 20, h + 16, z,  x, h, z);
-    pts.push(x, h, z - 20,  x, h + 16, z - 20);
-    pts.push(x, h, z + 20,  x, h + 16, z + 20);
-  }
+  for (let j = 0; j < 6; j++)
+    for (let i = 0; i < 6; i++) {
+      const x = AERA.x + (i - 2.5) * 46 + (j % 2 ? 23 : 0) + rand(-5, 5);
+      const z = AERA.z + (j - 2.5) * 40 + rand(-5, 5);
+      APOS.push([x, z]);
+      const h = 30;
+      pts.push(x, 0, z,  x, h, z);
+      pts.push(x - 12, h + 10, z,  x, h, z);
+      pts.push(x + 12, h + 10, z,  x, h, z);
+      pts.push(x, h, z - 12,  x, h + 10, z - 12);
+      pts.push(x, h, z + 12,  x, h + 10, z + 12);
+    }
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(pts), 3));
   scene.add(new THREE.LineSegments(g, mat));
   APOS.forEach(([x, z]) => {
     const s = new THREE.Sprite(spriteMat(0xcc88ff, 0));
-    s.position.set(x, 60, z);
-    s.scale.setScalar(90);
+    s.position.set(x, 34, z);
+    s.scale.setScalar(60);
     scene.add(s);
-    antData.push({ pos: new THREE.Vector3(x, 60, z), sprite: s, tTrig: 0, amp: 0 });
+    antData.push({ pos: new THREE.Vector3(x, 34, z), sprite: s, tTrig: 0, amp: 0 });
   });
+}
+
+// ═══════════ Fluorescence detector: 4 sites on the array perimeter ═══════════
+// Real relative positions (scaled from site coordinates; array center = origin,
+// +x = east, -z = north). Each building hosts 6 telescopes covering 180° of
+// azimuth toward the array interior, elevation 1.5°–30.4° (30°×30° FOV each).
+// HEAT: 3 upward-tilted telescopes (30°–58°) next to Coihueco.
+const BAY_DARK = new THREE.Color(0x101c30);
+const BAY_LIT  = new THREE.Color(0x7fc4ff);
+
+function makeTextSprite(text) {
+  const c = document.createElement('canvas');
+  c.width = 512; c.height = 64;
+  const g = c.getContext('2d');
+  g.font = 'bold 30px "Courier New", monospace';
+  g.textAlign = 'center';
+  g.fillStyle = 'rgba(150,200,255,0.9)';
+  g.fillText(text, 256, 42);
+  const s = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: new THREE.CanvasTexture(c), transparent: true,
+    opacity: 0.75, depthWrite: false, fog: false,
+  }));
+  s.scale.set(430, 54, 1);
+  return s;
+}
+
+const fdSites = [];
+{
+  const DEG = Math.PI / 180;
+  const SITES = [
+    { name: 'LOS LEONES',    x:  -927, z:  2447 },   // south
+    { name: 'LOS MORADOS',   x:  2158, z:   631 },   // east
+    { name: 'LOMA AMARILLA', x:   722, z: -2288 },   // north
+    { name: 'COIHUECO',      x: -1961, z:  -783, heat: true },  // west
+  ];
+  const bayGeo = new THREE.PlaneGeometry(20, 15);
+
+  SITES.forEach(cfg => {
+    const pos = new THREE.Vector3(cfg.x, 0, cfg.z);
+    const facing = Math.atan2(-cfg.z, -cfg.x);       // toward array center
+    const group = new THREE.Group();
+    group.position.copy(pos);
+
+    // curved climate-controlled building
+    const body = new THREE.Mesh(
+      new THREE.CylinderGeometry(52, 55, 26, 24),
+      new THREE.MeshLambertMaterial({ color: 0x333c48 })
+    );
+    body.position.y = 13;
+    group.add(body);
+    const roof = new THREE.Mesh(
+      new THREE.CylinderGeometry(56, 56, 4, 24),
+      new THREE.MeshLambertMaterial({ color: 0x272e38 })
+    );
+    roof.position.y = 28;
+    group.add(roof);
+
+    // communications tower behind the building
+    const tower = new THREE.Mesh(
+      new THREE.CylinderGeometry(1.6, 2.4, 85, 6),
+      new THREE.MeshLambertMaterial({ color: 0x4a5462 })
+    );
+    const backDir = new THREE.Vector3(Math.cos(facing + Math.PI), 0, Math.sin(facing + Math.PI));
+    tower.position.copy(backDir.clone().multiplyScalar(70)).setY(42);
+    group.add(tower);
+
+    // 6 telescope bays across 180° of azimuth, tilted up ~16°
+    const bays = [];
+    for (let k = 0; k < 6; k++) {
+      const az = facing - 75 * DEG + k * 30 * DEG;
+      const out = new THREE.Vector3(Math.cos(az), 0, Math.sin(az));
+      const mat = new THREE.MeshBasicMaterial({ color: BAY_DARK.clone(), fog: false });
+      const bay = new THREE.Mesh(bayGeo, mat);
+      bay.position.copy(out.clone().multiplyScalar(56)).setY(15);
+      bay.lookAt(bay.position.clone().add(out).add(new THREE.Vector3(0, 0.29, 0)));
+      group.add(bay);
+      bays.push({ mat, glow: 0 });
+    }
+
+    // HEAT: 3 tilted telescopes in front of Coihueco
+    let heatBays = null;
+    if (cfg.heat) {
+      const inDir = new THREE.Vector3(Math.cos(facing), 0, Math.sin(facing));
+      heatBays = [];
+      for (let k = 0; k < 3; k++) {
+        const az = facing - 40 * DEG + k * 40 * DEG;
+        const p = inDir.clone().multiplyScalar(95)
+          .add(new THREE.Vector3(Math.cos(az + Math.PI / 2), 0, Math.sin(az + Math.PI / 2)).multiplyScalar((k - 1) * 30));
+        const mat = new THREE.MeshBasicMaterial({ color: BAY_DARK.clone(), fog: false });
+        const bay = new THREE.Mesh(bayGeo, mat);
+        bay.position.copy(p).setY(12);
+        bay.lookAt(bay.position.clone().add(inDir).add(new THREE.Vector3(0, 1.0, 0))); // ~45° tilt
+        bay.scale.setScalar(0.75);
+        group.add(bay);
+        heatBays.push({ mat, glow: 0 });
+      }
+      const heatLabel = makeTextSprite('HEAT');
+      heatLabel.position.copy(inDir.clone().multiplyScalar(95)).setY(58);
+      heatLabel.scale.multiplyScalar(0.45);
+      group.add(heatLabel);
+    }
+
+    const label = makeTextSprite(cfg.name);
+    label.position.y = 130;
+    group.add(label);
+    scene.add(group);
+
+    // sight-line beam toward the shower (lights up while observing)
+    const beam = new THREE.Mesh(
+      new THREE.ConeGeometry(1, 1, 20, 1, true),
+      new THREE.MeshBasicMaterial({
+        color: 0x8ab0ff, transparent: true, opacity: 0,
+        blending: THREE.AdditiveBlending, side: THREE.DoubleSide, depthWrite: false,
+      })
+    );
+    scene.add(beam);
+
+    fdSites.push({
+      name: cfg.name, pos, facingDeg: facing / DEG,
+      top: pos.clone().setY(26), bays, heatBays, beam,
+    });
+  });
+}
+
+// which telescope (0-5) at `site` sees a point, or -1 / 'heat0..2'
+function fdSees(site, p) {
+  const vx = p.x - site.pos.x, vy = p.y - 26, vz = p.z - site.pos.z;
+  const el = Math.atan2(vy, Math.hypot(vx, vz)) * 180 / Math.PI;
+  const az = Math.atan2(vz, vx) * 180 / Math.PI;
+  let dAz = (az - (site.facingDeg - 90)) % 360;
+  if (dAz < 0) dAz += 360;
+  if (dAz < 180 && el >= 1.5 && el <= 30.4) return Math.floor(dAz / 30);
+  if (site.heatBays && dAz > 30 && dAz < 150 && el > 30 && el <= 58)
+    return 10 + Math.min(2, Math.floor((dAz - 30) / 40));
+  return -1;
 }
 
 // ═══════════ Per-event objects ═══════════
@@ -353,7 +499,12 @@ function buildEvent() {
   const d = new THREE.Vector3(
     Math.sin(theta) * Math.cos(phi), -Math.cos(theta), Math.sin(theta) * Math.sin(phi)
   );
-  const core = new THREE.Vector3(rand(-250, 250), 0, rand(-250, 250));
+  // core lands somewhere in the array; sometimes near AERA so the
+  // radio antennas get triggered
+  const core = Math.random() < 0.35
+    ? AERA.clone().add(new THREE.Vector3(rand(-350, 350), 0, rand(-350, 350)))
+    : new THREE.Vector3(rand(-950, 950), 0, rand(-950, 950));
+  core.y = 0;
   const hTop = 2400;
   const S = hTop / Math.cos(theta);
   const P0 = core.clone().sub(d.clone().multiplyScalar(S));
@@ -459,15 +610,27 @@ function buildEvent() {
   tankData.forEach(tk => {
     tk.tTrig = T.flash + tk.pos.distanceTo(P0) / ev.c;
     const lat = Math.hypot(tk.pos.x - core.x, tk.pos.z - core.z);
-    tk.amp = Math.exp(-lat / 750);
+    tk.amp = Math.exp(-lat / 200);
   });
   antData.forEach(an => {
     an.tTrig = T.flash + an.pos.distanceTo(P0) / ev.c;
     const lat = Math.hypot(an.pos.x - core.x, an.pos.z - core.z);
-    an.amp = Math.exp(-lat / 700);
+    an.amp = Math.exp(-lat / 450);
   });
-  ev.hud.nsd = tankData.filter(k => k.amp > 0.05).length + ' stations';
+  ev.hud.nsd = tankData.filter(k => k.amp > 0.1).length + ' stations';
   ev.hud.nrd = antData.filter(k => k.amp > 0.08).length + ' antennas';
+
+  // which FD telescopes see this shower (sampled along the axis)
+  const seenTel = new Set();
+  for (let i = 0; i <= 48; i++) {
+    const sp = P0.clone().add(d.clone().multiplyScalar(i / 48 * S));
+    fdSites.forEach(site => {
+      const k = fdSees(site, sp);
+      if (k >= 0) seenTel.add(site.name + ':' + k);
+    });
+  }
+  const nSites = new Set([...seenTel].map(s => s.split(':')[0])).size;
+  ev.hud.nfd = seenTel.size + ' tel / ' + nSites + ' sites';
 
   // orient front cap and cone along the axis
   const q = new THREE.Quaternion().setFromUnitVectors(UP, d);
@@ -505,7 +668,7 @@ function updateHUD(t) {
     ['Xmax   ' + ev.hud.xmax, 0.8],
     ['SD     ' + ev.hud.nsd, 1.05],
     ['RD     ' + ev.hud.nrd, 1.3],
-    ['FD     1 telescope', 1.55],
+    ['FD     ' + ev.hud.nfd, 1.55],
   ];
   const vis = t > t0 && t < T.fade1 - 0.5;
   hudEl.style.display = vis ? 'block' : 'none';
@@ -666,6 +829,37 @@ function animate() {
     an.sprite.material.opacity = (dta > 0 && an.amp > 0.08)
       ? Math.exp(-dta / 0.55) * an.amp * 0.9 * master : 0;
   });
+
+  // ── fluorescence telescopes: bays glow while the front is in their FOV ──
+  {
+    const active = sF > 0 && sF < ev.S;
+    const frontP = active ? ev.P0.clone().add(ev.d.clone().multiplyScalar(sF)) : null;
+    const DOWN = new THREE.Vector3(0, -1, 0);
+    fdSites.forEach(site => {
+      const k = frontP ? fdSees(site, frontP) : -1;
+      site.bays.forEach((bay, i) => {
+        const target = (k === i) ? (0.3 + 0.7 * inten) : 0;
+        bay.glow += (target - bay.glow) * 0.18;
+        bay.mat.color.copy(BAY_DARK).lerp(BAY_LIT, clamp(bay.glow * master, 0, 1));
+      });
+      if (site.heatBays) site.heatBays.forEach((bay, i) => {
+        const target = (k === 10 + i) ? (0.3 + 0.7 * inten) : 0;
+        bay.glow += (target - bay.glow) * 0.18;
+        bay.mat.color.copy(BAY_DARK).lerp(BAY_LIT, clamp(bay.glow * master, 0, 1));
+      });
+      if (k >= 0 && frontP) {
+        const v = frontP.clone().sub(site.top);
+        const L = v.length();
+        v.normalize();
+        site.beam.quaternion.setFromUnitVectors(DOWN, v);
+        site.beam.position.copy(site.top).addScaledVector(v, L / 2);
+        site.beam.scale.set(L * 0.035 + 6, L, L * 0.035 + 6);
+        site.beam.material.opacity = 0.05 * (0.3 + 0.7 * inten) * master;
+      } else {
+        site.beam.material.opacity *= 0.88;
+      }
+    });
+  }
 
   updateHUD(t);
   controls.update();
