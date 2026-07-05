@@ -1,0 +1,20 @@
+title: UHECRs — Ultra-High-Energy Cosmic Rays
+description: Knowledge base for ultra-high-energy cosmic rays (UHECRs), the highest-energy particles in the universe.
+url: "https://uhecrs.com"
+lang: en
+
+author:
+  name: Pavlo Plotko
+
+plugins:
+  - jekyll-sitemap
+  - jekyll-seo-tag
+
+defaults:
+  - scope:
+      path: ""
+    values:
+      layout: default
+
+exclude:
+  - README.md

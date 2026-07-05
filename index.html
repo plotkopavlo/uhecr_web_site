@@ -11,6 +11,7 @@
   <meta name="robots" content="index, follow">
   <meta name="author" content="Pavlo Plotko, with the help of Claude (Anthropic)">
   <link rel="canonical" href="https://uhecrs.com/">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 
   <!-- Open Graph (Google, Facebook, LinkedIn previews) -->
   <meta property="og:type"        content="website">
@@ -82,6 +83,29 @@
       text-transform: uppercase;
       margin-top: 9px;
     }
+    #home-nav {
+      margin-top: 20px;
+      display: flex; justify-content: center; flex-wrap: wrap;
+      gap: 10px 14px;
+      pointer-events: auto;
+    }
+    #home-nav a {
+      color: rgba(155,205,255,0.78);
+      text-decoration: none;
+      font-size: clamp(0.58rem, 1vw, 0.72rem);
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      border: 1px solid rgba(100,160,230,0.28);
+      border-radius: 3px;
+      padding: 6px 13px;
+      background: rgba(4,12,26,0.45);
+      transition: color 0.2s, border-color 0.2s, background 0.2s;
+    }
+    #home-nav a:hover {
+      color: #fff;
+      border-color: rgba(160,210,255,0.7);
+      background: rgba(20,50,100,0.5);
+    }
     #tagline {
       position: absolute; bottom: 18px; left: 50%;
       transform: translateX(-50%);
@@ -106,9 +130,15 @@
   <div id="site-title">
     <h1>UHECR</h1>
     <p>Ultra-High-Energy Cosmic Rays</p>
+    <nav id="home-nav">
+      <a href="/what-are-uhecrs/">What are UHECRs?</a>
+      <a href="/detection/">Detection</a>
+      <a href="/experiments/">Experiments</a>
+      <a href="/open-questions/">Open questions</a>
+    </nav>
   </div>
   <div id="tagline">
-    Knowledge base for the highest-energy particles in the universe &mdash; coming soon
+    Knowledge base for the highest-energy particles in the universe
     <span class="credit">&copy; 2026 Pavlo Plotko &mdash; created with Claude</span>
   </div>
 </div>
@@ -141,7 +171,7 @@ const gauss = () => (Math.random() + Math.random() + Math.random() - 1.5) / 1.5;
 // ═══════════════════════ State ═══════════════════════
 let W, H, dpr;
 let bg = null;                   // prerendered background canvas
-let stars, ev, tanks, fdSite, tracks, fluoStrips;
+let stars, ev, tanks, antennas, fdSite, fdCam, tracks, fluoStrips;
 let sparks = [];
 let splash = [];
 let startTs = null, lastCycle = -1;
@@ -298,7 +328,51 @@ function buildDetectors() {
   });
   ev.hud.nsd = tanks.filter(t => t.trig).length + ' stations';
 
+  // Radio antennas interleaved between the tanks
+  const na = Math.max(5, Math.round(W / 170));
+  antennas = Array.from({ length: na }, (_, i) => {
+    const x = (i + 0.5) * (W / na) + W / na * 0.5 + rand(-10, 10);
+    const y = earthY + (H - earthY) * 0.55 + rand(-3, 3);
+    const d = Math.hypot(x - ix, y - iy);
+    const lat = Math.abs(x - coreX);
+    const amp = Math.exp(-lat / (W * 0.13));
+    return { x, y, tTrig: T.flash + d / ev.c, amp, trig: amp > 0.08 };
+  });
+  ev.hud.nrd = antennas.filter(a => a.trig).length + ' antennas';
+
   fdSite = { x: W * 0.10, y: earthY };
+}
+
+// ── FD camera inset: hexagonal pixel grid, shower track crosses it ──
+function buildFDCam() {
+  const pw = clamp(W * 0.17, 140, 200);
+  const ph = pw * 0.70;
+  const x = W - pw - 16, y = H - ph - 34;
+  const cols = 13, rows = 8;
+  const sx = pw / (cols + 1.5), sy = (ph - 30) / rows;
+
+  // track line across the camera (down-going, mirrors the event)
+  const ax = x + pw * rand(0.64, 0.84), ay = y + 24 + ph * rand(0.02, 0.10);
+  const bx = x + pw * rand(0.16, 0.34), by = y + ph - ph * rand(0.05, 0.14);
+  const dx = bx - ax, dy = by - ay, L2 = dx * dx + dy * dy;
+
+  const px = [];
+  for (let j = 0; j < rows; j++) {
+    for (let i = 0; i < cols; i++) {
+      const cx = x + sx * (i + 1) + (j % 2) * sx * 0.5;
+      const cy = y + 24 + sy * (j + 0.5);
+      let u = ((cx - ax) * dx + (cy - ay) * dy) / L2;
+      u = clamp(u, 0, 1);
+      const dd = Math.hypot(cx - (ax + u * dx), cy - (ay + u * dy));
+      const lit = dd < sx * 0.9;
+      px.push({
+        cx, cy, lit, u,
+        tTrig: T.flash + u * (T.ground - T.flash),
+        hue: 240 - 240 * u,          // early = blue, late = red
+      });
+    }
+  }
+  fdCam = { x, y, pw, ph, px, r: sx * 0.42 };
 }
 
 // ═══════════════════════ Stars ═══════════════════════
@@ -403,6 +477,9 @@ function buildBackground() {
   // ── Water-Cherenkov tanks (static bodies) ──
   tanks.forEach(t => drawTankBody(b, t.x, t.y));
 
+  // ── Radio antennas (static bodies) ──
+  antennas.forEach(a => drawAntennaBody(b, a.x, a.y));
+
   // ── Fluorescence telescope building ──
   drawFDBuilding(b, fdSite.x, fdSite.y);
 }
@@ -442,6 +519,23 @@ function drawTankBody(g, x, y) {
   g.strokeStyle = 'rgba(120,160,220,0.35)';
   g.strokeRect(-w * 0.30, -w * 0.16, w * 0.6, w * 0.30);
   g.restore();
+}
+
+function drawAntennaBody(g, x, y) {
+  const h = clamp(W / 70, 14, 20);
+  g.strokeStyle = '#3a4450';
+  g.lineWidth = 1;
+  g.beginPath();
+  g.moveTo(x, y); g.lineTo(x, y - h);                                    // mast
+  g.moveTo(x - h * 0.38, y - h - h * 0.30); g.lineTo(x, y - h);          // upper V
+  g.lineTo(x + h * 0.38, y - h - h * 0.30);
+  g.moveTo(x - h * 0.38, y - h + h * 0.34); g.lineTo(x, y - h);          // lower V
+  g.lineTo(x + h * 0.38, y - h + h * 0.34);
+  g.stroke();
+  g.beginPath();                                                          // ground shadow
+  g.ellipse(x, y + 1.5, h * 0.28, h * 0.09, 0, 0, TAU);
+  g.fillStyle = 'rgba(0,0,0,0.4)';
+  g.fill();
 }
 
 function drawFDBuilding(g, x, y) {
@@ -585,6 +679,45 @@ function drawFluorescence(t) {
     ctx.fillStyle = g;
     ctx.beginPath(); ctx.arc(x, y, r, 0, TAU); ctx.fill();
   });
+  ctx.restore();
+}
+
+// ── Cherenkov light cone: beamed forward from the shower front ──
+function drawCherenkov(t, master) {
+  const sF = frontS(t);
+  if (sF <= 4 || sF >= ev.S * 0.99) return;
+  const inten = GH(sF / ev.S, ev.xmaxFrac, ev.lam) / ev.ghMax;
+  const a = 0.16 * inten * master;
+  if (a < 0.01) return;
+
+  const [ax, ay] = toXY(sF, 0);
+  const rem = ev.S - sF;
+  const halfW = rem * Math.tan(11 * Math.PI / 180) + 6;
+  const [g1x, g1y] = toXY(ev.S, halfW);
+  const [g2x, g2y] = toXY(ev.S, -halfW);
+
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  const g = ctx.createRadialGradient(ax, ay, 0, ax, ay, rem * 1.05);
+  g.addColorStop(0, 'rgba(130,195,255,' + a.toFixed(3) + ')');
+  g.addColorStop(0.55, 'rgba(100,165,255,' + (a * 0.45).toFixed(3) + ')');
+  g.addColorStop(1, 'rgba(70,130,255,0)');
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  ctx.moveTo(ax, ay);
+  ctx.lineTo(g1x, g1y);
+  ctx.lineTo(g2x, g2y);
+  ctx.closePath();
+  ctx.fill();
+
+  // light pool building up on the ground ahead of the shower
+  const pool = ctx.createRadialGradient(ev.coreX, ev.earthY, 0, ev.coreX, ev.earthY, halfW + 30);
+  pool.addColorStop(0, 'rgba(120,185,255,' + (a * 0.5).toFixed(3) + ')');
+  pool.addColorStop(1, 'rgba(80,140,255,0)');
+  ctx.fillStyle = pool;
+  ctx.beginPath();
+  ctx.ellipse(ev.coreX, ev.earthY, halfW + 30, (halfW + 30) * 0.22, 0, Math.PI, TAU);
+  ctx.fill();
   ctx.restore();
 }
 
@@ -766,6 +899,83 @@ function drawTankSignals(t, master) {
   ctx.restore();
 }
 
+// ── Radio antenna triggers: geomagnetic pulse ──
+function drawAntennaSignals(t, master) {
+  const h = clamp(W / 70, 14, 20);
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  antennas.forEach(an => {
+    if (!an.trig) return;
+    const dt = t - an.tTrig;
+    if (dt < 0) return;
+    const A = an.amp * master;
+    const topY = an.y - h;
+
+    // violet flash at the dipoles
+    const glow = Math.exp(-dt / 0.55) * A;
+    if (glow > 0.015) {
+      const g = ctx.createRadialGradient(an.x, topY, 0, an.x, topY, h * 1.5);
+      g.addColorStop(0, 'rgba(210,140,255,' + (glow * 0.85).toFixed(3) + ')');
+      g.addColorStop(0.4, 'rgba(170,110,255,' + (glow * 0.4).toFixed(3) + ')');
+      g.addColorStop(1, 'rgba(140,90,255,0)');
+      ctx.fillStyle = g;
+      ctx.beginPath(); ctx.arc(an.x, topY, h * 1.5, 0, TAU); ctx.fill();
+    }
+
+    // expanding radio wavefront arcs
+    if (dt < 0.9) {
+      for (let k = 0; k < 2; k++) {
+        const rr = (dt - k * 0.12) * 90;
+        if (rr <= 2) continue;
+        const wa = Math.max(0, (1 - dt / 0.9)) * A * 0.5;
+        ctx.strokeStyle = 'rgba(200,150,255,' + wa.toFixed(3) + ')';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.arc(an.x, topY, rr, Math.PI * 1.15, Math.PI * 1.85);
+        ctx.stroke();
+      }
+    }
+  });
+  ctx.restore();
+}
+
+// ── FD camera inset: pixels light along the track, colored by arrival time ──
+function drawFDCamera(t, master) {
+  if (W < 620) return;
+  const a0 = ease(phase(t, T.flash - 0.4, T.flash + 0.4)) * master;
+  if (a0 < 0.01) return;
+  const { x, y, pw, ph, px, r } = fdCam;
+
+  ctx.save();
+  // panel
+  ctx.globalAlpha = a0;
+  ctx.fillStyle = 'rgba(2,10,22,0.82)';
+  ctx.fillRect(x, y, pw, ph);
+  ctx.strokeStyle = 'rgba(80,140,220,0.4)';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(x, y, pw, ph);
+  mono(9, 'bold');
+  ctx.textAlign = 'left';
+  ctx.fillStyle = 'rgba(130,185,255,0.9)';
+  ctx.fillText('FD CAMERA — TELESCOPE 1', x + 9, y + 15);
+
+  // pixels
+  px.forEach(p => {
+    if (p.lit && t >= p.tTrig) {
+      const ap = ease(phase(t, p.tTrig, p.tTrig + 0.12));
+      ctx.globalAlpha = a0 * (0.45 + 0.55 * ap);
+      ctx.fillStyle = 'hsl(' + p.hue.toFixed(0) + ',95%,62%)';
+      ctx.beginPath(); ctx.arc(p.cx, p.cy, r, 0, TAU); ctx.fill();
+    } else {
+      ctx.globalAlpha = a0 * 0.35;
+      ctx.strokeStyle = 'rgba(70,110,160,0.5)';
+      ctx.lineWidth = 0.6;
+      ctx.beginPath(); ctx.arc(p.cx, p.cy, r, 0, TAU); ctx.stroke();
+    }
+  });
+  ctx.restore();
+}
+
 // ── FD telescope field-of-view, brightens as the shower crosses it ──
 function drawFDView(t, master) {
   const sF = frontS(t);
@@ -914,7 +1124,8 @@ function drawHUD(t, master) {
     ['θ      ' + ev.hud.zenith, 0.55],
     ['Xmax   ' + ev.hud.xmax, 0.80],
     ['SD     ' + ev.hud.nsd, 1.05],
-    ['FD     1 telescope', 1.30],
+    ['RD     ' + ev.hud.nrd, 1.30],
+    ['FD     1 telescope', 1.55],
   ];
 
   ctx.save();
@@ -946,7 +1157,7 @@ function drawHUD(t, master) {
 
   // blinking cursor
   const last = lines.length - 1;
-  if (phase(t, t0 + 1.3, t0 + 1.6) >= 1 && Math.floor(t * 2.4) % 2 === 0) {
+  if (phase(t, t0 + 1.55, t0 + 1.85) >= 1 && Math.floor(t * 2.4) % 2 === 0) {
     ctx.globalAlpha = a0;
     ctx.fillStyle = 'rgba(140,255,190,0.9)';
     ctx.fillRect(x + 150, y + last * lh - 9, 7, 11);
@@ -967,7 +1178,7 @@ function frame(ts) {
 
   if (cyc !== lastCycle) {           // new event each loop
     lastCycle = cyc;
-    buildEvent(); buildTracks(); buildFluo(); buildDetectors(); buildBackground();
+    buildEvent(); buildTracks(); buildFluo(); buildDetectors(); buildFDCam(); buildBackground();
     sparks = []; splash = [];
   }
 
@@ -980,6 +1191,7 @@ function frame(ts) {
 
   drawStars(elapsed);
   drawFluorescence(t);
+  drawCherenkov(t, master);
   drawFDView(t, master);
   drawTracks(t, master);
   updateSparks(t, dt);
@@ -990,8 +1202,10 @@ function frame(ts) {
   updateSplash(t, dt);
   drawImpact(t, master);
   drawTankSignals(t, master);
+  drawAntennaSignals(t, master);
   drawLabels(t, master);
   drawHUD(t, master);
+  drawFDCamera(t, master);
 
   // fade overlay
   if (master < 1) {
@@ -1017,6 +1231,7 @@ function init() {
   buildTracks();
   buildFluo();
   buildDetectors();
+  buildFDCam();
   buildBackground();
   sparks = []; splash = [];
   startTs = null; lastCycle = 0;
