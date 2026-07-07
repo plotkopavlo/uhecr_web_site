@@ -64,8 +64,11 @@ permalink: /sources-3d/
       padding: 11px 15px; max-width: 320px;
       white-space: pre-wrap;
     }
+    #info { pointer-events: auto; }
     #info .t { color: #fff; font-weight: bold; }
     #info .d { color: rgba(120,170,225,0.75); }
+    #info a { color: #7db8ff; }
+    #info a:hover { color: #fff; }
     #hint {
       position: absolute; bottom: 16px; right: 20px;
       font-size: 0.6rem; letter-spacing: 0.16em; text-transform: uppercase;
@@ -270,7 +273,7 @@ const blazar={
        'M_BH ≈ 10⁸–10⁹ M☉ · jet Γ ≈ 10–30\n'+
        'knots: R ~ 0.01 pc · B ~ 0.1–1 G\n'+
        'Hillas: E_max ≈ Z · 10²⁰ eV\n'+
-       '<span class="d">Fermi-I shock acceleration in jet knots;\nradio galaxies (M87, Cen A) are the\nmisaligned parent population.</span>',
+       '<span class="d">Fermi-I shock acceleration in jet knots;\nradio galaxies (M87, Cen A) are the\nmisaligned parent population.</span>\n<a href="/sources/blazars/">read more →</a>',
   group:new THREE.Group(),
   build(){
     const g=this.group;
@@ -360,7 +363,7 @@ const tde={
        'M_BH ≈ 10⁶–10⁷ M☉ · star ~1 M☉\n'+
        'jet Γ ~ 10 · R ~ 10¹⁴–10¹⁶ cm · B ~ 1–10 G\n'+
        'E_max → 10²⁰ eV (internal shocks)\n'+
-       '<span class="d">Fallback accretion L ∝ t⁻⁵ᐟ³;\ne.g. Swift J1644+57, AT2019dsg (ν).</span>',
+       '<span class="d">Fallback accretion L ∝ t⁻⁵ᐟ³;\ne.g. Swift J1644+57, AT2019dsg (ν).</span>\n<a href="/sources/tdes/">read more →</a>',
   T:{dis:5.0,si:9.5,disk0:10.5,jet0:13},
   group:new THREE.Group(),
   build(){
@@ -516,7 +519,7 @@ const grb={
        'E_iso ~ 10⁵³ erg · jet Γ ≈ 100–1000\n'+
        'internal shocks: R ~ 10¹³–10¹⁵ cm\n'+
        'B ~ 10³–10⁶ G · E_max ≈ 10²⁰ eV\n'+
-       '<span class="d">Colliding shells → prompt γ pulses;\nexternal shock → afterglow;\ne.g. GRB 221009A (the “BOAT”).</span>',
+       '<span class="d">Colliding shells → prompt γ pulses;\nexternal shock → afterglow;\ne.g. GRB 221009A (the “BOAT”).</span>\n<a href="/sources/grbs/">read more →</a>',
   T:{col:4.0,drill0:5.0,brk:9.0,prompt0:9.3,prompt1:17,after0:13},
   group:new THREE.Group(),
   build(){

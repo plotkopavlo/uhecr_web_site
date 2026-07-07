@@ -65,8 +65,11 @@ permalink: /sources/
       padding: 11px 15px; max-width: 320px;
       white-space: pre-wrap;
     }
+    #info { pointer-events: auto; }
     #info .t { color: #fff; font-weight: bold; }
     #info .d { color: rgba(120,170,225,0.75); }
+    #info a { color: #7db8ff; }
+    #info a:hover { color: #fff; }
     @media (max-width: 640px) { #info { font-size: 9px; line-height: 14px; max-width: 240px; } }
   </style>
 </head>
@@ -164,7 +167,7 @@ const blazar={
        'M_BH ≈ 10⁸–10⁹ M☉ · jet Γ ≈ 10–30\n'+
        'knots: R ~ 0.01 pc · B ~ 0.1–1 G\n'+
        'Hillas: E_max ≈ Z · 10²⁰ eV\n'+
-       '<span class="d">Fermi-I shock acceleration in jet knots;\nradio galaxies (M87, Cen A) are the\nmisaligned parent population.</span>',
+       '<span class="d">Fermi-I shock acceleration in jet knots;\nradio galaxies (M87, Cen A) are the\nmisaligned parent population.</span>\n<a href="/sources/blazars/">read more →</a>',
   init(){
     this.bh={x:W*0.30,y:H*0.58};
     this.A=-0.62;                                    // jet axis angle (up-right)
@@ -282,7 +285,7 @@ const tde={
        'M_BH ≈ 10⁶–10⁷ M☉ · star ~1 M☉\n'+
        'jet Γ ~ 10 · R ~ 10¹⁴–10¹⁶ cm · B ~ 1–10 G\n'+
        'E_max → 10²⁰ eV (internal shocks)\n'+
-       '<span class="d">Fallback accretion L ∝ t⁻⁵ᐟ³;\ne.g. Swift J1644+57, AT2019dsg (ν).</span>',
+       '<span class="d">Fallback accretion L ∝ t⁻⁵ᐟ³;\ne.g. Swift J1644+57, AT2019dsg (ν).</span>\n<a href="/sources/tdes/">read more →</a>',
   T:{app0:0.5,dis:5.0,wrap0:5.5,si:9.5,disk0:10.5,jet0:13,end:28},
   init(){
     this.bh={x:W*0.46,y:H*0.55};
@@ -460,7 +463,7 @@ const grb={
        'E_iso ~ 10⁵³ erg · jet Γ ≈ 100–1000\n'+
        'internal shocks: R ~ 10¹³–10¹⁵ cm\n'+
        'B ~ 10³–10⁶ G · E_max ≈ 10²⁰ eV\n'+
-       '<span class="d">Colliding shells → prompt γ pulses;\nexternal shock → afterglow;\ne.g. GRB 221009A (the “BOAT”).</span>',
+       '<span class="d">Colliding shells → prompt γ pulses;\nexternal shock → afterglow;\ne.g. GRB 221009A (the “BOAT”).</span>\n<a href="/sources/grbs/">read more →</a>',
   T:{col:4.0,drill0:5.0,brk:9.0,prompt0:9.3,prompt1:17,after0:13,end:28},
   init(){
     this.st={x:W*0.42,y:H*0.56,R:Math.min(W,H)*0.13};

@@ -10,7 +10,7 @@ A century after the discovery of cosmic rays, the highest-energy particles in th
 
 ## Where do they come from?
 
-No individual UHECR source has been identified. Magnetic fields — Galactic and extragalactic — deflect charged particles by degrees to tens of degrees, blurring any pointing back to the sources. The observed **dipole anisotropy** above 8 EeV proves an extragalactic origin, and intermediate-scale excesses (the TA hotspot, correlations with catalogs of starburst galaxies and AGN) are tantalising, but none has crossed the discovery threshold. Candidate accelerators include **radio galaxies and AGN jets, starburst-driven winds, gamma-ray bursts, and tidal disruption events** — transient sources are particularly attractive because magnetic time delays would erase their temporal signature.
+No individual UHECR source has been identified. Magnetic fields — Galactic and extragalactic — deflect charged particles by degrees to tens of degrees, blurring any pointing back to the sources. The observed **dipole anisotropy** above 8 EeV proves an extragalactic origin, and intermediate-scale excesses (the TA hotspot, correlations with catalogs of starburst galaxies and AGN) are tantalising, but none has crossed the discovery threshold. Candidate accelerators include **[radio galaxies and AGN jets](/sources/blazars/), starburst-driven winds, [gamma-ray bursts](/sources/grbs/), and [tidal disruption events](/sources/tdes/)** — transient sources are particularly attractive because magnetic time delays would erase their temporal signature.
 
 ## What are they made of?
 
