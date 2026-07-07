@@ -106,6 +106,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
 const clamp=(v,a,b)=>v<a?a:v>b?b:v;
 const phase=(t,a,b)=>clamp((t-a)/(b-a),0,1);
+const lerp=(a,b,t)=>a+(b-a)*t;
 const ease=t=>t<0.5?2*t*t:-1+(4-2*t)*t;
 const rand=(a,b)=>a+Math.random()*(b-a);
 const gauss=()=>(Math.random()+Math.random()+Math.random()-1.5)/1.5;
