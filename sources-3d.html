@@ -1,0 +1,670 @@
+---
+layout: null
+permalink: /sources-3d/
+---
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>UHECR Sources in 3D — Blazars, TDEs, GRBs | uhecrs.com</title>
+  <meta name="description" content="Interactive 3D visualizations of the leading candidate sources of ultra-high-energy cosmic rays: AGN jets and blazars, tidal disruption events, and gamma-ray bursts.">
+  <link rel="canonical" href="https://uhecrs.com/sources-3d/">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { height: 100%; }
+    body { background: #000; overflow: hidden; font-family: 'Helvetica Neue', Arial, sans-serif; }
+    canvas { display: block; }
+    #overlay { position: fixed; inset: 0; pointer-events: none; }
+    #head { position: absolute; top: 20px; left: 50%; transform: translateX(-50%); text-align: center; }
+    #head h1 {
+      font-size: clamp(1.2rem, 3vw, 2rem); font-weight: 100;
+      letter-spacing: 0.5em; margin-right: -0.5em; color: #fff;
+      text-shadow: 0 0 34px rgba(80,160,255,0.9);
+    }
+    #head p {
+      font-size: clamp(0.55rem, 1.1vw, 0.72rem); color: rgba(150,205,255,0.65);
+      letter-spacing: 0.3em; margin-right: -0.3em; text-transform: uppercase; margin-top: 6px;
+    }
+    #back, #to2d {
+      position: absolute; top: 22px; pointer-events: auto;
+      color: rgba(155,205,255,0.8); text-decoration: none;
+      font-size: 0.7rem; letter-spacing: 0.14em; text-transform: uppercase;
+      border: 1px solid rgba(100,160,230,0.28); border-radius: 3px;
+      padding: 6px 12px; background: rgba(4,12,26,0.5);
+    }
+    #back { left: 20px; }
+    #to2d { right: 20px; }
+    #back:hover, #to2d:hover { color: #fff; border-color: rgba(160,210,255,0.7); }
+    #picker {
+      position: absolute; top: 108px; left: 50%; transform: translateX(-50%);
+      display: flex; gap: 10px; pointer-events: auto;
+    }
+    #picker button {
+      font-family: inherit; cursor: pointer;
+      color: rgba(155,205,255,0.75); background: rgba(4,12,26,0.5);
+      border: 1px solid rgba(100,160,230,0.28); border-radius: 3px;
+      font-size: clamp(0.55rem, 1vw, 0.7rem); letter-spacing: 0.15em;
+      text-transform: uppercase; padding: 7px 15px; transition: all 0.25s;
+    }
+    #picker button:hover { color: #fff; }
+    #picker button.on {
+      color: #fff; border-color: rgba(160,210,255,0.85);
+      background: rgba(30,70,140,0.55);
+      box-shadow: 0 0 18px rgba(80,160,255,0.35);
+    }
+    #info {
+      position: absolute; left: 16px; bottom: 16px;
+      font-family: 'Courier New', monospace;
+      font-size: 11px; line-height: 17px;
+      color: rgba(160,215,255,0.9);
+      background: rgba(2,12,24,0.6);
+      border: 1px solid rgba(80,150,220,0.35);
+      padding: 11px 15px; max-width: 320px;
+      white-space: pre-wrap;
+    }
+    #info .t { color: #fff; font-weight: bold; }
+    #info .d { color: rgba(120,170,225,0.75); }
+    #hint {
+      position: absolute; bottom: 16px; right: 20px;
+      font-size: 0.6rem; letter-spacing: 0.16em; text-transform: uppercase;
+      color: rgba(120,180,255,0.4); text-align: right;
+    }
+    @media (max-width: 640px) { #info { font-size: 9px; line-height: 14px; max-width: 240px; } }
+  </style>
+</head>
+<body>
+<div id="overlay">
+  <a id="back" href="/">&#8592; uhecrs.com</a>
+  <a id="to2d" href="/sources/">2D version &#8594;</a>
+  <div id="head">
+    <h1>UHECR SOURCES</h1>
+    <p>Where are they accelerated? &mdash; 3D</p>
+  </div>
+  <div id="picker">
+    <button data-i="0">Blazar / AGN jet</button>
+    <button data-i="1">Tidal disruption</button>
+    <button data-i="2">Gamma-ray burst</button>
+  </div>
+  <div id="info"></div>
+  <div id="hint">drag to orbit &middot; scroll to zoom</div>
+</div>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+const clamp=(v,a,b)=>v<a?a:v>b?b:v;
+const phase=(t,a,b)=>clamp((t-a)/(b-a),0,1);
+const ease=t=>t<0.5?2*t*t:-1+(4-2*t)*t;
+const rand=(a,b)=>a+Math.random()*(b-a);
+const gauss=()=>(Math.random()+Math.random()+Math.random()-1.5)/1.5;
+const TAU=Math.PI*2;
+
+// ═══════════ Renderer, camera, controls ═══════════
+const renderer=new THREE.WebGLRenderer({antialias:true});
+renderer.setPixelRatio(Math.min(2,devicePixelRatio||1));
+renderer.setSize(innerWidth,innerHeight);
+document.body.appendChild(renderer.domElement);
+
+const scene=new THREE.Scene();
+scene.background=new THREE.Color(0x010208);
+const camera=new THREE.PerspectiveCamera(50,innerWidth/innerHeight,0.5,20000);
+camera.position.set(420,180,520);
+const controls=new OrbitControls(camera,renderer.domElement);
+controls.enableDamping=true; controls.dampingFactor=0.06;
+controls.autoRotate=true; controls.autoRotateSpeed=0.5;
+controls.minDistance=120; controls.maxDistance=3000;
+scene.add(new THREE.HemisphereLight(0x304a70,0x0a0a14,0.7));
+
+// starfield
+{
+  const n=2200,pos=new Float32Array(n*3);
+  for(let i=0;i<n;i++){
+    const v=new THREE.Vector3().randomDirection().multiplyScalar(8000);
+    pos.set([v.x,v.y,v.z],i*3);
+  }
+  const g=new THREE.BufferGeometry();
+  g.setAttribute('position',new THREE.BufferAttribute(pos,3));
+  scene.add(new THREE.Points(g,new THREE.PointsMaterial({
+    color:0xbfd4ff,size:2,sizeAttenuation:false,transparent:true,opacity:0.8,
+  })));
+}
+
+// ═══════════ Shared textures & helpers ═══════════
+function glowTexture(){
+  const c=document.createElement('canvas'); c.width=c.height=64;
+  const g=c.getContext('2d');
+  const gr=g.createRadialGradient(32,32,0,32,32,32);
+  gr.addColorStop(0,'rgba(255,255,255,1)');
+  gr.addColorStop(0.3,'rgba(255,255,255,0.5)');
+  gr.addColorStop(1,'rgba(255,255,255,0)');
+  g.fillStyle=gr; g.fillRect(0,0,64,64);
+  return new THREE.CanvasTexture(c);
+}
+const glowTex=glowTexture();
+const spr=(color,op)=>new THREE.Sprite(new THREE.SpriteMaterial({
+  map:glowTex,color,transparent:true,opacity:op,
+  blending:THREE.AdditiveBlending,depthWrite:false,
+}));
+
+function diskTexture(){
+  const c=document.createElement('canvas'); c.width=c.height=256;
+  const g=c.getContext('2d');
+  const gr=g.createRadialGradient(128,128,0,128,128,128);
+  gr.addColorStop(0.00,'rgba(0,0,0,0)');
+  gr.addColorStop(0.14,'rgba(0,0,0,0)');
+  gr.addColorStop(0.20,'rgba(255,250,235,0.95)');
+  gr.addColorStop(0.34,'rgba(255,205,120,0.8)');
+  gr.addColorStop(0.60,'rgba(255,140,60,0.35)');
+  gr.addColorStop(1.00,'rgba(200,80,30,0)');
+  g.fillStyle=gr; g.fillRect(0,0,256,256);
+  // faint spiral streaks
+  g.globalCompositeOperation='lighter';
+  for(let i=0;i<26;i++){
+    g.strokeStyle='rgba(255,220,170,0.10)';
+    g.lineWidth=2; g.beginPath();
+    const a0=rand(0,TAU),r0=rand(30,120);
+    g.arc(128,128,r0,a0,a0+rand(0.8,2.4)); g.stroke();
+  }
+  return new THREE.CanvasTexture(c);
+}
+const diskTex=diskTexture();
+
+function makeDisk(scale){
+  const m=new THREE.Mesh(
+    new THREE.CircleGeometry(1,64),
+    new THREE.MeshBasicMaterial({map:diskTex,transparent:true,
+      blending:THREE.AdditiveBlending,depthWrite:false,side:THREE.DoubleSide})
+  );
+  m.rotation.x=-Math.PI/2;
+  m.scale.setScalar(scale);
+  return m;
+}
+function makeBH(r){
+  const g=new THREE.Group();
+  const bh=new THREE.Mesh(new THREE.SphereGeometry(r,32,16),
+    new THREE.MeshBasicMaterial({color:0x000000}));
+  g.add(bh);
+  const ring=new THREE.Mesh(new THREE.TorusGeometry(r*1.25,r*0.05,8,64),
+    new THREE.MeshBasicMaterial({color:0xffe8c8,transparent:true,opacity:0.8,
+      blending:THREE.AdditiveBlending,depthWrite:false}));
+  g.add(ring);
+  g.userData.ring=ring;
+  return g;
+}
+function makeJetCone(len,r,color,op){
+  const m=new THREE.Mesh(
+    new THREE.ConeGeometry(r,len,24,1,true),
+    new THREE.MeshBasicMaterial({color,transparent:true,opacity:op,
+      blending:THREE.AdditiveBlending,side:THREE.DoubleSide,depthWrite:false})
+  );
+  // apex at origin, opening along +Y
+  m.geometry.translate(0,-len/2,0);
+  m.rotation.z=Math.PI;
+  return m;
+}
+function makeTextSprite(text,scl){
+  const c=document.createElement('canvas'); c.width=512; c.height=64;
+  const g=c.getContext('2d');
+  g.font='bold 28px "Courier New", monospace';
+  g.textAlign='center'; g.fillStyle='rgba(170,210,255,0.95)';
+  g.fillText(text,256,42);
+  const s=new THREE.Sprite(new THREE.SpriteMaterial({
+    map:new THREE.CanvasTexture(c),transparent:true,opacity:0.85,depthWrite:false}));
+  s.scale.set(240*(scl||1),30*(scl||1),1);
+  return s;
+}
+
+// ── escaping messengers pool ──
+const ESC_COL={cr:0xffffff,nu:0x8cffbe,ga:0xff9aff};
+const escPool=Array.from({length:14},()=>{
+  const head=spr(0xffffff,0);
+  const lineG=new THREE.BufferGeometry();
+  lineG.setAttribute('position',new THREE.BufferAttribute(new Float32Array(6),3));
+  const line=new THREE.Line(lineG,new THREE.LineBasicMaterial({
+    color:0xffffff,transparent:true,opacity:0,
+    blending:THREE.AdditiveBlending,depthWrite:false}));
+  scene.add(head); scene.add(line);
+  return {head,line,active:false,age:0,life:1.8,o:new THREE.Vector3(),d:new THREE.Vector3(),type:'cr'};
+});
+function spawnEscape(origin,dirV,type){
+  const e=escPool.find(e=>!e.active);
+  if(!e) return;
+  e.active=true; e.age=0; e.type=type;
+  e.o.copy(origin); e.d.copy(dirV).normalize();
+  e.head.material.color.setHex(ESC_COL[type]);
+  e.line.material.color.setHex(ESC_COL[type]);
+  e.head.scale.setScalar(type==='cr'?26:14);
+}
+function updateEscapes(dt,m){
+  escPool.forEach(e=>{
+    if(!e.active){e.head.material.opacity=0;e.line.material.opacity=0;return;}
+    e.age+=dt;
+    if(e.age>e.life){e.active=false;return;}
+    const a=(1-e.age/e.life)*m;
+    const dist=e.age*420;
+    const h=e.o.clone().addScaledVector(e.d,dist);
+    const tl=e.o.clone().addScaledVector(e.d,Math.max(0,dist-110));
+    e.head.position.copy(h);
+    e.head.material.opacity=a*(e.type==='cr'?0.95:0.6);
+    const p=e.line.geometry.attributes.position.array;
+    p[0]=tl.x;p[1]=tl.y;p[2]=tl.z;p[3]=h.x;p[4]=h.y;p[5]=h.z;
+    e.line.geometry.attributes.position.needsUpdate=true;
+    e.line.material.opacity=a*(e.type==='cr'?0.8:0.4);
+  });
+}
+
+// ═══════════ SCENE 1: BLAZAR ═══════════
+const blazar={
+  dur:26,
+  info:'<span class="t">ACTIVE GALACTIC NUCLEUS — BLAZAR</span>\n'+
+       'M_BH ≈ 10⁸–10⁹ M☉ · jet Γ ≈ 10–30\n'+
+       'knots: R ~ 0.01 pc · B ~ 0.1–1 G\n'+
+       'Hillas: E_max ≈ Z · 10²⁰ eV\n'+
+       '<span class="d">Fermi-I shock acceleration in jet knots;\nradio galaxies (M87, Cen A) are the\nmisaligned parent population.</span>',
+  group:new THREE.Group(),
+  build(){
+    const g=this.group;
+    this.bh=makeBH(14); g.add(this.bh);
+    this.disk=makeDisk(150); g.add(this.disk);
+    const torus=new THREE.Mesh(new THREE.TorusGeometry(190,45,12,48),
+      new THREE.MeshBasicMaterial({color:0x4a2a16,transparent:true,opacity:0.35,depthWrite:false}));
+    torus.rotation.x=Math.PI/2; g.add(torus);
+    glowAt(g,0,0,0,90,0xffdcaa,0.25);
+    // jets along +Y/-Y
+    this.jetUp=makeJetCone(900,130,0x7ab0ff,0.10); g.add(this.jetUp);
+    this.jetDn=makeJetCone(380,60,0x7ab0ff,0.03);
+    this.jetDn.rotation.z=0; g.add(this.jetDn);      // opens along -Y
+    // helical particles
+    this.NH=260;
+    const hp=new Float32Array(this.NH*3);
+    this.helixG=new THREE.BufferGeometry();
+    this.helixG.setAttribute('position',new THREE.BufferAttribute(hp,3));
+    this.helixS=Array.from({length:this.NH},()=>rand(0,900));
+    g.add(new THREE.Points(this.helixG,new THREE.PointsMaterial({
+      color:0x9cc8ff,size:5,transparent:true,opacity:0.5,
+      blending:THREE.AdditiveBlending,depthWrite:false})));
+    // knots
+    this.knots=[{s:380,v:52,sp:spr(0xcfe6ff,0.8)},{s:140,v:60,sp:spr(0xcfe6ff,0.8)}];
+    this.knots.forEach(k=>g.add(k.sp));
+    this.spawnT=0; this.escT=1.5;
+    const l1=makeTextSprite('RELATIVISTIC JET  Γ ≈ 10–30',1.1); l1.position.set(150,430,0); g.add(l1);
+    const l2=makeTextSprite('KNOT — SHOCK ACCELERATION',0.9); l2.position.set(-140,260,0); g.add(l2);
+    const l3=makeTextSprite('ACCRETION DISK + TORUS',0.9); l3.position.set(230,-40,0); g.add(l3);
+  },
+  reset(){ this.knots.forEach(k=>k.s=rand(80,500)); },
+  update(t,dt,m,el){
+    this.disk.rotation.z+=dt*0.35;
+    this.disk.material.opacity=m;
+    this.bh.userData.ring.material.opacity=0.8*m;
+    this.jetUp.material.opacity=0.10*m;
+    this.jetDn.material.opacity=0.03*m;
+    // helix
+    const hp=this.helixG.attributes.position.array;
+    for(let i=0;i<this.NH;i++){
+      this.helixS[i]=(this.helixS[i]+dt*120)%900;
+      const s=this.helixS[i];
+      const r=6+s*0.13;
+      const a=s*0.05-el*3+(i%2)*Math.PI;
+      hp[i*3]=Math.cos(a)*r; hp[i*3+1]=s; hp[i*3+2]=Math.sin(a)*r;
+    }
+    this.helixG.attributes.position.needsUpdate=true;
+    // knots
+    this.spawnT-=dt;
+    if(this.spawnT<=0){
+      const free=this.knots.find(k=>k.s>860);
+      if(free){free.s=60;free.v=rand(45,65);}
+      else if(this.knots.length<5){
+        const k={s:60,v:rand(45,65),sp:spr(0xcfe6ff,0.8)};
+        this.group.add(k.sp); this.knots.push(k);
+      }
+      this.spawnT=rand(3.5,5.5);
+    }
+    this.knots.forEach(k=>{
+      k.s+=k.v*dt;
+      k.sp.position.set(0,Math.min(k.s,880),0);
+      k.sp.scale.setScalar(30+k.s*0.05);
+      k.sp.material.opacity=(k.s>860?0:0.85)*m;
+    });
+    // messengers from mid-jet knot
+    this.escT-=dt;
+    if(this.escT<=0){
+      const k=this.knots.reduce((a,b)=>Math.abs(b.s-450)<Math.abs(a.s-450)?b:a);
+      const o=new THREE.Vector3(0,k.s,0);
+      spawnEscape(o,new THREE.Vector3(gauss()*0.15,1,gauss()*0.15),'cr');
+      if(Math.random()<0.7) spawnEscape(o,new THREE.Vector3(gauss()*0.3,1,gauss()*0.3),'nu');
+      if(Math.random()<0.5) spawnEscape(o,new THREE.Vector3(gauss()*0.35,1,gauss()*0.35),'ga');
+      this.escT=rand(2.5,4);
+    }
+  },
+};
+
+function glowAt(g,x,y,z,scale,color,op){
+  const s=spr(color,op); s.position.set(x,y,z); s.scale.setScalar(scale); g.add(s);
+  return s;
+}
+
+// ═══════════ SCENE 2: TDE ═══════════
+const tde={
+  dur:30,
+  info:'<span class="t">TIDAL DISRUPTION EVENT — JETTED TDE</span>\n'+
+       'M_BH ≈ 10⁶–10⁷ M☉ · star ~1 M☉\n'+
+       'jet Γ ~ 10 · R ~ 10¹⁴–10¹⁶ cm · B ~ 1–10 G\n'+
+       'E_max → 10²⁰ eV (internal shocks)\n'+
+       '<span class="d">Fallback accretion L ∝ t⁻⁵ᐟ³;\ne.g. Swift J1644+57, AT2019dsg (ν).</span>',
+  T:{dis:5.0,si:9.5,disk0:10.5,jet0:13},
+  group:new THREE.Group(),
+  build(){
+    const g=this.group;
+    this.bh=makeBH(10); g.add(this.bh);
+    // star
+    this.star=new THREE.Mesh(new THREE.SphereGeometry(8,24,12),
+      new THREE.MeshBasicMaterial({color:0xffeec8}));
+    g.add(this.star);
+    this.starGlow=glowAt(g,0,0,0,50,0xffe0a0,0.7);
+    // orbit path (parabola in XZ plane): r=2rp/(1+cos th)
+    this.rp=80;
+    this.path=[];
+    for(let th=-2.5;th<=0.95;th+=0.02){
+      const r=2*this.rp/(1+Math.cos(th));
+      this.path.push(new THREE.Vector3(r*Math.cos(th+0.5),0,r*Math.sin(th+0.5)));
+    }
+    // debris stream points (bound: wrap inward; unbound: escape)
+    this.ND=420;
+    const dp=new Float32Array(this.ND*3);
+    const dc=new Float32Array(this.ND*3);
+    this.debG=new THREE.BufferGeometry();
+    this.debG.setAttribute('position',new THREE.BufferAttribute(dp,3));
+    this.debG.setAttribute('color',new THREE.BufferAttribute(dc,3));
+    g.add(new THREE.Points(this.debG,new THREE.PointsMaterial({
+      size:5,vertexColors:true,transparent:true,opacity:0.9,
+      blending:THREE.AdditiveBlending,depthWrite:false})));
+    this.deb=Array.from({length:this.ND},(_,i)=>({
+      off:i/this.ND, unbound:i%5===0, jit:gauss()*0.06, rMul:1,
+    }));
+    // disk + jet
+    this.disk=makeDisk(1); g.add(this.disk);
+    this.jetUp=makeJetCone(420,46,0x8cb8ff,0); g.add(this.jetUp);
+    this.jetDn=makeJetCone(180,22,0x8cb8ff,0); g.add(this.jetDn);
+    this.blobs=Array.from({length:5},()=>({s:-1,v:0,sp:spr(0xbcd8ff,0)}));
+    this.blobs.forEach(b=>g.add(b.sp));
+    this.siFlash=spr(0xffffe8,0); g.add(this.siFlash);
+    this.blT=0; this.escT=0;
+    this.lStar=makeTextSprite('STAR  ~1 M☉',0.8); g.add(this.lStar);
+    this.lJet=makeTextSprite('JET  Γ ~ 10  (SWIFT J1644+57)',1.0);
+    this.lJet.position.set(140,340,0); g.add(this.lJet);
+    this.lStream=makeTextSprite('DEBRIS STREAM',0.8);
+    this.lStream.position.set(220,30,120); g.add(this.lStream);
+  },
+  reset(){ this.deb.forEach(p=>p.rMul=1); this.blobs.forEach(b=>b.s=-1); },
+  pos(th,rMul){
+    const r=2*this.rp/(1+Math.cos(clamp(th,-2.7,2.7)))*(rMul||1);
+    return new THREE.Vector3(r*Math.cos(th+0.5),0,r*Math.sin(th+0.5));
+  },
+  update(t,dt,m,el){
+    const {T}=this;
+    const u=phase(t,0.5,T.si+4);
+    const th=-2.5+5.0*Math.pow(u,1.6);
+    this.bh.userData.ring.material.opacity=0.7*m;
+
+    // star before disruption
+    if(t<T.dis){
+      const p=this.pos(th);
+      const str=1+2.5*ease(phase(t,T.dis-1.6,T.dis));
+      this.star.position.copy(p);
+      this.starGlow.position.copy(p);
+      this.starGlow.material.opacity=0.7*m;
+      // stretch along velocity
+      const p2=this.pos(th+0.05);
+      const v=p2.clone().sub(p).normalize();
+      this.star.quaternion.setFromUnitVectors(new THREE.Vector3(1,0,0),v);
+      this.star.scale.set(str,1/Math.sqrt(str),1/Math.sqrt(str));
+      this.star.visible=true;
+      this.lStar.position.copy(p).add(new THREE.Vector3(0,34,0));
+      this.lStar.material.opacity=0.85*m*(1-phase(t,T.dis-0.8,T.dis));
+    } else {
+      this.star.visible=false;
+      this.starGlow.material.opacity=0;
+      this.lStar.material.opacity=0;
+    }
+
+    // debris
+    const spread=ease(phase(t,T.dis,T.si+3));
+    const dp=this.debG.attributes.position.array;
+    const dc=this.debG.attributes.color.array;
+    for(let i=0;i<this.ND;i++){
+      const d=this.deb[i],o=i*3;
+      let a=0,p=null;
+      if(t>T.dis){
+        if(d.unbound){
+          const q=th-d.off*1.5-0.15;
+          p=this.pos(q,1+spread*(0.4+d.off*2.2));
+          a=0.35*(1-d.off)*spread;
+        } else {
+          d.rMul=Math.max(0.5,d.rMul-dt*0.012*(1-d.off));
+          const q=th-d.off*2.1;
+          if(q>-2.5){ p=this.pos(q,d.rMul+d.jit*0.3); a=0.6*spread; }
+        }
+      }
+      if(p){
+        p.y=d.jit*14*spread;
+        dp[o]=p.x;dp[o+1]=p.y;dp[o+2]=p.z;
+        dc[o]=a*m;dc[o+1]=a*0.82*m;dc[o+2]=a*0.6*m;
+      } else { dp[o+1]=-99999; dc[o]=dc[o+1]=dc[o+2]=0; }
+    }
+    this.debG.attributes.position.needsUpdate=true;
+    this.debG.attributes.color.needsUpdate=true;
+    this.lStream.material.opacity=0.85*m*ease(phase(t,T.dis+0.5,T.dis+1.6))*(1-phase(t,T.disk0+3,T.disk0+5));
+
+    // self-intersection flash
+    const siP=phase(t,T.si,T.si+1.8);
+    if(siP>0&&siP<1){
+      const fl=siP<0.25?siP/0.25:1-(siP-0.25)/0.75;
+      this.siFlash.position.copy(this.pos(0.9,0.8));
+      this.siFlash.scale.setScalar(70);
+      this.siFlash.material.opacity=fl*0.9*m;
+    } else this.siFlash.material.opacity=0;
+
+    // disk builds, jet launches
+    const dk=ease(phase(t,T.disk0,T.disk0+3.5));
+    this.disk.scale.setScalar(10+80*dk);
+    this.disk.rotation.z+=dt*0.8;
+    this.disk.material.opacity=dk*m;
+    const jp=ease(phase(t,T.jet0,T.jet0+2.5));
+    this.jetUp.material.opacity=0.14*jp*m;
+    this.jetDn.material.opacity=0.04*jp*m;
+    this.jetDn.rotation.z=0;
+    this.lJet.material.opacity=0.9*m*ease(phase(t,T.jet0+1.5,T.jet0+3));
+    if(jp>0.1){
+      this.blT-=dt;
+      if(this.blT<=0){
+        const b=this.blobs.find(b=>b.s<0);
+        if(b){b.s=10;b.v=rand(90,140);}
+        this.blT=rand(0.9,1.5);
+      }
+      this.blobs.forEach(b=>{
+        if(b.s<0){b.sp.material.opacity=0;return;}
+        b.s+=b.v*dt;
+        if(b.s>400){b.s=-1;b.sp.material.opacity=0;return;}
+        b.sp.position.set(0,b.s,0);
+        b.sp.scale.setScalar(24);
+        b.sp.material.opacity=0.7*jp*m;
+      });
+      this.escT-=dt;
+      if(this.escT<=0){
+        spawnEscape(new THREE.Vector3(0,300,0),new THREE.Vector3(gauss()*0.15,1,gauss()*0.15),'cr');
+        if(Math.random()<0.7) spawnEscape(new THREE.Vector3(0,260,0),new THREE.Vector3(gauss()*0.3,1,gauss()*0.3),'nu');
+        this.escT=rand(2.2,3.5);
+      }
+    }
+  },
+};
+
+// ═══════════ SCENE 3: GRB ═══════════
+const grb={
+  dur:30,
+  info:'<span class="t">LONG GAMMA-RAY BURST — COLLAPSAR</span>\n'+
+       'E_iso ~ 10⁵³ erg · jet Γ ≈ 100–1000\n'+
+       'internal shocks: R ~ 10¹³–10¹⁵ cm\n'+
+       'B ~ 10³–10⁶ G · E_max ≈ 10²⁰ eV\n'+
+       '<span class="d">Colliding shells → prompt γ pulses;\nexternal shock → afterglow;\ne.g. GRB 221009A (the “BOAT”).</span>',
+  T:{col:4.0,drill0:5.0,brk:9.0,prompt0:9.3,prompt1:17,after0:13},
+  group:new THREE.Group(),
+  build(){
+    const g=this.group;
+    this.R=100;
+    this.star=new THREE.Mesh(new THREE.SphereGeometry(1,40,24),
+      new THREE.MeshBasicMaterial({color:0x9ec2ff,transparent:true,opacity:0.85}));
+    this.star.scale.setScalar(this.R);
+    g.add(this.star);
+    this.starGlow=glowAt(g,0,0,0,this.R*4.2,0x86aefc,0.35);
+    this.coreFlash=spr(0xffffff,0); g.add(this.coreFlash);
+    this.brkFlash=spr(0xffffff,0); this.brkFlash.position.set(0,this.R,0); g.add(this.brkFlash);
+    this.jetUp=makeJetCone(600,62,0xd8e6ff,0); g.add(this.jetUp);
+    this.jetDn=makeJetCone(240,26,0xd8e6ff,0); g.add(this.jetDn);
+    // shells: flattened glow sprites moving up the jet
+    this.shells=Array.from({length:12},()=>({s:-1,v:0,sp:spr(0xdceaff,0)}));
+    this.shells.forEach(s=>{s.sp.scale.set(46,10,1);g.add(s.sp);});
+    this.flashes=Array.from({length:6},()=>({age:99,sp:spr(0xfff8e0,0)}));
+    this.flashes.forEach(f=>g.add(f.sp));
+    // afterglow shell
+    this.after=new THREE.Mesh(new THREE.SphereGeometry(1,32,16),
+      new THREE.MeshBasicMaterial({color:0xffb070,transparent:true,opacity:0,
+        blending:THREE.AdditiveBlending,side:THREE.DoubleSide,depthWrite:false}));
+    this.after.position.set(0,480,0); g.add(this.after);
+    this.shT=0;
+    this.lStar=makeTextSprite('WOLF–RAYET STAR  M ≈ 30 M☉',1.0);
+    this.lStar.position.set(0,-this.R-46,0); g.add(this.lStar);
+    this.lShock=makeTextSprite('INTERNAL SHOCKS → PROMPT γ',1.0);
+    this.lShock.position.set(170,330,0); g.add(this.lShock);
+    this.lAfter=makeTextSprite('EXTERNAL SHOCK — AFTERGLOW',0.9);
+    this.lAfter.position.set(-170,500,0); g.add(this.lAfter);
+  },
+  reset(){ this.shells.forEach(s=>s.s=-1); this.flashes.forEach(f=>f.age=99); },
+  update(t,dt,m,el){
+    const {T,R}=this;
+    const colP=ease(phase(t,T.col,T.col+1.2));
+    const starA=(1-0.8*ease(phase(t,T.brk,T.brk+5)))*m;
+    this.star.scale.setScalar(R*(1-0.26*colP));
+    this.star.material.opacity=0.85*starA;
+    this.starGlow.material.opacity=0.35*starA*(1+0.06*Math.sin(el*5));
+    this.lStar.material.opacity=0.9*m*ease(phase(t,1,2.2))*(1-phase(t,T.brk,T.brk+2));
+
+    // core collapse flash
+    const cf=phase(t,T.col,T.col+1.4);
+    this.coreFlash.scale.setScalar(R*1.4);
+    this.coreFlash.material.opacity=(cf>0&&cf<1)?(cf<0.2?cf/0.2:1-(cf-0.2)/0.8)*0.95*m:0;
+
+    // drilling / post-breakout jet
+    const drill=ease(phase(t,T.drill0,T.brk));
+    const post=phase(t,T.brk,this.dur);
+    const jl=drill<1?R*1.05*drill:R+post*520;
+    this.jetUp.scale.set(drill<1?0.5:1,jl/600,drill<1?0.5:1);
+    this.jetUp.material.opacity=(drill>0?0.16:0)*m;
+    this.jetDn.scale.copy(this.jetUp.scale).multiplyScalar(0.5);
+    this.jetDn.material.opacity=(drill>0?0.05:0)*m;
+
+    // breakout flash
+    const bf=phase(t,T.brk,T.brk+1.0);
+    this.brkFlash.scale.setScalar(R*1.6);
+    this.brkFlash.material.opacity=(bf>0&&bf<1)?(bf<0.2?bf/0.2:1-(bf-0.2)/0.8)*m:0;
+
+    // shells + internal shocks
+    if(t>T.prompt0&&t<T.prompt1){
+      this.shT-=dt;
+      if(this.shT<=0){
+        const s=this.shells.find(s=>s.s<0);
+        if(s){s.s=R*1.05;s.v=rand(120,260);}
+        this.shT=rand(0.55,1.0);
+      }
+    }
+    const act=this.shells.filter(s=>s.s>0);
+    act.forEach(s=>{s.s+=s.v*dt; if(s.s>560)s.s=-1;});
+    for(const a of act) for(const b of act){
+      if(a!==b&&a.s>0&&b.s>0&&Math.abs(a.s-b.s)<8&&a.v>b.v+15){
+        const f=this.flashes.find(f=>f.age>0.7);
+        if(f){f.age=0;f.sp.position.set(0,(a.s+b.s)/2,0);}
+        a.v=b.v=(a.v+b.v)/2;
+        const o=new THREE.Vector3(0,(a.s+b.s)/2,0);
+        if(Math.random()<0.65) spawnEscape(o,new THREE.Vector3(gauss()*0.12,1,gauss()*0.12),'cr');
+        if(Math.random()<0.5) spawnEscape(o,new THREE.Vector3(gauss()*0.3,1,gauss()*0.3),'nu');
+      }
+    }
+    this.shells.forEach(s=>{
+      if(s.s<0){s.sp.material.opacity=0;return;}
+      s.sp.position.set(0,s.s,0);
+      s.sp.scale.set(30+s.s*0.10,8+s.s*0.02,1);
+      s.sp.material.opacity=0.65*m;
+    });
+    this.flashes.forEach(f=>{
+      f.age+=dt;
+      f.sp.scale.setScalar(56);
+      f.sp.material.opacity=f.age<0.7?(1-f.age/0.7)*0.9*m:0;
+    });
+    this.lShock.material.opacity=0.9*m*ease(phase(t,T.prompt0+1.5,T.prompt0+2.5))*(t<T.prompt1+3?1:0.4);
+
+    // afterglow
+    const agP=phase(t,T.after0,this.dur);
+    if(agP>0){
+      this.after.scale.setScalar(10+Math.pow(agP,0.4)*220);
+      this.after.material.opacity=(1-agP)*0.10*m;
+      this.after.material.color.setHSL(0.07-0.04*agP,1,0.6);
+    } else this.after.material.opacity=0;
+    this.lAfter.material.opacity=0.85*m*ease(phase(t,T.after0+2,T.after0+3.5))*(1-agP*0.7);
+  },
+};
+
+// ═══════════ Scene manager ═══════════
+const scenes=[blazar,tde,grb];
+scenes.forEach(s=>{s.build();s.group.visible=false;scene.add(s.group);});
+
+const infoEl=document.getElementById('info');
+const btns=[...document.querySelectorAll('#picker button')];
+let cur=0,sceneT0=0;
+const clock=new THREE.Clock();
+
+function switchTo(i){
+  scenes[cur].group.visible=false;
+  cur=i; sceneT0=clock.getElapsedTime();
+  scenes[cur].reset();
+  scenes[cur].group.visible=true;
+  infoEl.innerHTML=scenes[cur].info;
+  btns.forEach((b,k)=>b.classList.toggle('on',k===cur));
+  escPool.forEach(e=>e.active=false);
+}
+btns.forEach(b=>b.addEventListener('click',()=>switchTo(+b.dataset.i)));
+
+let prevT=0;
+function animate(){
+  requestAnimationFrame(animate);
+  const el=clock.getElapsedTime();
+  const dt=Math.min(0.05,el-prevT); prevT=el;
+  let t=el-sceneT0;
+  if(t>scenes[cur].dur){ switchTo((cur+1)%scenes.length); t=0; }
+  const m=ease(phase(t,0,1))*(1-ease(phase(t,scenes[cur].dur-1.3,scenes[cur].dur)));
+  scenes[cur].update(t,dt,m,el);
+  updateEscapes(dt,m);
+  infoEl.style.opacity=m;
+  controls.update();
+  renderer.render(scene,camera);
+}
+switchTo(0);
+animate();
+
+addEventListener('resize',()=>{
+  camera.aspect=innerWidth/innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth,innerHeight);
+});
+</script>
+</body>
+</html>

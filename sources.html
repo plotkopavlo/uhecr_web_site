@@ -1,0 +1,670 @@
+---
+layout: null
+permalink: /sources/
+---
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>UHECR Sources — Blazars, TDEs, GRBs | uhecrs.com</title>
+  <meta name="description" content="Animated visualizations of the leading candidate sources of ultra-high-energy cosmic rays: AGN jets and blazars, tidal disruption events, and gamma-ray bursts.">
+  <link rel="canonical" href="https://uhecrs.com/sources/">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { height: 100%; }
+    body { background: #000; overflow: hidden; font-family: 'Helvetica Neue', Arial, sans-serif; }
+    canvas { display: block; }
+    #overlay { position: fixed; inset: 0; pointer-events: none; }
+    #head { position: absolute; top: 20px; left: 50%; transform: translateX(-50%); text-align: center; }
+    #head h1 {
+      font-size: clamp(1.2rem, 3vw, 2rem); font-weight: 100;
+      letter-spacing: 0.5em; margin-right: -0.5em; color: #fff;
+      text-shadow: 0 0 34px rgba(80,160,255,0.9);
+    }
+    #head p {
+      font-size: clamp(0.55rem, 1.1vw, 0.72rem); color: rgba(150,205,255,0.65);
+      letter-spacing: 0.3em; margin-right: -0.3em; text-transform: uppercase; margin-top: 6px;
+    }
+    #back, #to3d {
+      position: absolute; top: 22px; pointer-events: auto;
+      color: rgba(155,205,255,0.8); text-decoration: none;
+      font-size: 0.7rem; letter-spacing: 0.14em; text-transform: uppercase;
+      border: 1px solid rgba(100,160,230,0.28); border-radius: 3px;
+      padding: 6px 12px; background: rgba(4,12,26,0.5);
+    }
+    #back { left: 20px; }
+    #to3d { right: 20px; }
+    #back:hover, #to3d:hover { color: #fff; border-color: rgba(160,210,255,0.7); }
+    #picker {
+      position: absolute; top: 108px; left: 50%; transform: translateX(-50%);
+      display: flex; gap: 10px; pointer-events: auto;
+    }
+    #picker button {
+      font-family: inherit; cursor: pointer;
+      color: rgba(155,205,255,0.75); background: rgba(4,12,26,0.5);
+      border: 1px solid rgba(100,160,230,0.28); border-radius: 3px;
+      font-size: clamp(0.55rem, 1vw, 0.7rem); letter-spacing: 0.15em;
+      text-transform: uppercase; padding: 7px 15px;
+      transition: all 0.25s;
+    }
+    #picker button:hover { color: #fff; }
+    #picker button.on {
+      color: #fff; border-color: rgba(160,210,255,0.85);
+      background: rgba(30,70,140,0.55);
+      box-shadow: 0 0 18px rgba(80,160,255,0.35);
+    }
+    #info {
+      position: absolute; left: 16px; bottom: 16px;
+      font-family: 'Courier New', monospace;
+      font-size: 11px; line-height: 17px;
+      color: rgba(160,215,255,0.9);
+      background: rgba(2,12,24,0.6);
+      border: 1px solid rgba(80,150,220,0.35);
+      padding: 11px 15px; max-width: 320px;
+      white-space: pre-wrap;
+    }
+    #info .t { color: #fff; font-weight: bold; }
+    #info .d { color: rgba(120,170,225,0.75); }
+    @media (max-width: 640px) { #info { font-size: 9px; line-height: 14px; max-width: 240px; } }
+  </style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="overlay">
+  <a id="back" href="/">&#8592; uhecrs.com</a>
+  <a id="to3d" href="/sources-3d/">3D version &#8594;</a>
+  <div id="head">
+    <h1>UHECR SOURCES</h1>
+    <p>Where are they accelerated?</p>
+  </div>
+  <div id="picker">
+    <button data-i="0">Blazar / AGN jet</button>
+    <button data-i="1">Tidal disruption</button>
+    <button data-i="2">Gamma-ray burst</button>
+  </div>
+  <div id="info"></div>
+</div>
+<script>
+(function () {
+'use strict';
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+const TAU = Math.PI * 2;
+const clamp = (v,a,b)=>v<a?a:v>b?b:v;
+const phase = (t,a,b)=>clamp((t-a)/(b-a),0,1);
+const lerp = (a,b,t)=>a+(b-a)*t;
+const ease = t=>t<0.5?2*t*t:-1+(4-2*t)*t;
+const rand = (a,b)=>a+Math.random()*(b-a);
+const gauss = ()=>(Math.random()+Math.random()+Math.random()-1.5)/1.5;
+
+let W,H,dpr,stars;
+function mono(s,w){ ctx.font=(w?w+' ':'')+s+'px "Courier New", monospace'; }
+function glow(x,y,r,col,a){
+  if(a<=0.004) return;
+  const g=ctx.createRadialGradient(x,y,0,x,y,r);
+  g.addColorStop(0,col.replace('$',a.toFixed(3)));
+  g.addColorStop(1,col.replace('$','0'));
+  ctx.fillStyle=g; ctx.beginPath(); ctx.arc(x,y,r,0,TAU); ctx.fill();
+}
+function label(txt,x,y,a,col,align){
+  if(a<=0.01) return;
+  ctx.save(); ctx.globalAlpha=a; mono(11);
+  ctx.fillStyle=col||'rgba(190,220,255,0.9)';
+  ctx.textAlign=align||'left'; ctx.fillText(txt,x,y); ctx.restore();
+}
+
+// ── escaping messengers (UHECR streaks, neutrinos, gammas) ──
+let escapes=[];
+function spawnEscape(x,y,ang,type){
+  escapes.push({x,y,dx:Math.cos(ang),dy:Math.sin(ang),age:0,life:1.6,type});
+}
+function drawEscapes(dt,master){
+  escapes=escapes.filter(e=>(e.age+=dt)<e.life);
+  ctx.save(); ctx.globalCompositeOperation='lighter';
+  escapes.forEach(e=>{
+    const d=e.age*520, a=(1-e.age/e.life)*master;
+    const hx=e.x+e.dx*d, hy=e.y+e.dy*d;
+    if(e.type==='cr'){
+      const tx=e.x+e.dx*Math.max(0,d-130), ty=e.y+e.dy*Math.max(0,d-130);
+      const g=ctx.createLinearGradient(tx,ty,hx,hy);
+      g.addColorStop(0,'rgba(160,210,255,0)');
+      g.addColorStop(1,'rgba(255,255,255,'+(a*0.95).toFixed(3)+')');
+      ctx.strokeStyle=g; ctx.lineWidth=2.2;
+      ctx.beginPath(); ctx.moveTo(tx,ty); ctx.lineTo(hx,hy); ctx.stroke();
+      glow(hx,hy,10,'rgba(220,240,255,$)',a*0.8);
+      label('UHECR',hx+12,hy-6,a*0.9,'rgba(255,255,220,0.95)');
+    } else if(e.type==='nu'){
+      ctx.setLineDash([6,7]); ctx.lineDashOffset=-e.age*300;
+      ctx.strokeStyle='rgba(140,255,190,'+(a*0.7).toFixed(3)+')';
+      ctx.lineWidth=1.3;
+      ctx.beginPath(); ctx.moveTo(e.x,e.y); ctx.lineTo(hx,hy); ctx.stroke();
+      ctx.setLineDash([]);
+      label('ν',hx+8,hy,a*0.85,'rgba(140,255,190,0.95)');
+    } else {
+      ctx.strokeStyle='rgba(255,150,255,'+(a*0.6).toFixed(3)+')';
+      ctx.lineWidth=1.2; ctx.beginPath();
+      const px=-e.dy, py=e.dx;
+      for(let s=0;s<=d;s+=6){
+        const wx=e.x+e.dx*s+px*Math.sin(s*0.25)*4, wy=e.y+e.dy*s+py*Math.sin(s*0.25)*4;
+        s===0?ctx.moveTo(wx,wy):ctx.lineTo(wx,wy);
+      }
+      ctx.stroke();
+      label('γ',hx+8,hy,a*0.85,'rgba(255,160,255,0.95)');
+    }
+  });
+  ctx.restore();
+}
+
+// ════════════════════════ SCENE 1: BLAZAR / AGN JET ════════════════════════
+const blazar={
+  name:'BLAZAR', dur:26,
+  info:'<span class="t">ACTIVE GALACTIC NUCLEUS — BLAZAR</span>\n'+
+       'M_BH ≈ 10⁸–10⁹ M☉ · jet Γ ≈ 10–30\n'+
+       'knots: R ~ 0.01 pc · B ~ 0.1–1 G\n'+
+       'Hillas: E_max ≈ Z · 10²⁰ eV\n'+
+       '<span class="d">Fermi-I shock acceleration in jet knots;\nradio galaxies (M87, Cen A) are the\nmisaligned parent population.</span>',
+  init(){
+    this.bh={x:W*0.30,y:H*0.58};
+    this.A=-0.62;                                    // jet axis angle (up-right)
+    this.ca=Math.cos(this.A); this.sa=Math.sin(this.A);
+    this.L=Math.hypot(W,H)*0.75;
+    this.knots=[{s:this.L*0.42,v:105},{s:this.L*0.16,v:120}];
+    this.spawnT=0; this.accT=0; this.disk=[];
+    for(let i=0;i<46;i++) this.disk.push({r:rand(26,120),ph:rand(0,TAU),w:rand(0.25,0.8),sp:rand(0.25,0.9)});
+  },
+  draw(t,dt,m){
+    const {bh,ca,sa,L}=this;
+    const px=-sa, py=ca;
+
+    // host galaxy glow
+    glow(bh.x,bh.y,H*0.42,'rgba(70,80,140,$)',0.10*m);
+
+    // dusty torus (behind)
+    ctx.save(); ctx.translate(bh.x,bh.y); ctx.rotate(this.A+Math.PI/2); ctx.scale(1,0.42);
+    ctx.strokeStyle='rgba(80,45,25,'+(0.5*m).toFixed(3)+')';
+    ctx.lineWidth=36; ctx.beginPath(); ctx.arc(0,0,158,0,TAU); ctx.stroke();
+    ctx.restore();
+
+    // accretion disk: rotating segments, Doppler-boosted approaching side
+    ctx.save(); ctx.translate(bh.x,bh.y); ctx.rotate(this.A+Math.PI/2); ctx.scale(1,0.30);
+    ctx.globalCompositeOperation='lighter';
+    this.disk.forEach(seg=>{
+      const ang=seg.ph+t*seg.sp;
+      const dop=1+0.8*Math.cos(ang);
+      const heat=clamp(1-(seg.r-26)/100,0,1);
+      const a=(0.10+0.28*heat)*dop*m;
+      ctx.strokeStyle='hsla('+(28+heat*22)+',100%,'+(60+heat*28)+'%,'+clamp(a,0,1).toFixed(3)+')';
+      ctx.lineWidth=3.2;
+      ctx.beginPath(); ctx.arc(0,0,seg.r,ang,ang+seg.w); ctx.stroke();
+    });
+    ctx.restore();
+
+    // black hole + photon ring
+    glow(bh.x,bh.y,60,'rgba(255,230,190,$)',0.25*m);
+    ctx.beginPath(); ctx.arc(bh.x,bh.y,15,0,TAU); ctx.fillStyle='#000'; ctx.fill();
+    ctx.strokeStyle='rgba(255,235,200,'+(0.85*m).toFixed(3)+')';
+    ctx.lineWidth=1.6; ctx.beginPath(); ctx.arc(bh.x,bh.y,18,0,TAU); ctx.stroke();
+
+    // jets (main + de-beamed counter-jet)
+    ctx.save(); ctx.globalCompositeOperation='lighter';
+    [[1,1],[-1,0.13]].forEach(([dirn,boost])=>{
+      const len=dirn>0?L:L*0.4;
+      // cone envelope
+      const wEnd=len*0.14;
+      const g=ctx.createLinearGradient(bh.x,bh.y,bh.x+ca*dirn*len,bh.y+sa*dirn*len);
+      g.addColorStop(0,'rgba(120,170,255,'+(0.16*boost*m).toFixed(3)+')');
+      g.addColorStop(1,'rgba(90,140,255,0)');
+      ctx.fillStyle=g; ctx.beginPath();
+      ctx.moveTo(bh.x+px*4,bh.y+py*4);
+      ctx.lineTo(bh.x+ca*dirn*len+px*wEnd,bh.y+sa*dirn*len+py*wEnd);
+      ctx.lineTo(bh.x+ca*dirn*len-px*wEnd,bh.y+sa*dirn*len-py*wEnd);
+      ctx.lineTo(bh.x-px*4,bh.y-py*4); ctx.closePath(); ctx.fill();
+      // helical magnetic field
+      for(let hp=0;hp<2;hp++){
+        ctx.strokeStyle='rgba(140,190,255,'+(0.22*boost*m).toFixed(3)+')';
+        ctx.lineWidth=1;
+        ctx.beginPath();
+        for(let s=10;s<len;s+=9){
+          const wj=(4+s*0.13)*Math.sin(s*0.045-t*3.5+hp*Math.PI);
+          const hx2=bh.x+ca*dirn*s+px*wj, hy2=bh.y+sa*dirn*s+py*wj;
+          s===10?ctx.moveTo(hx2,hy2):ctx.lineTo(hx2,hy2);
+        }
+        ctx.stroke();
+      }
+    });
+    ctx.restore();
+
+    // knots (superluminal blobs) + shock flare
+    this.spawnT-=dt;
+    if(this.spawnT<=0){ this.knots.push({s:26,v:rand(95,135)}); this.spawnT=rand(3.5,5.5); }
+    this.knots=this.knots.filter(k=>k.s<L*0.98);
+    this.knots.forEach(k=>{
+      k.s+=k.v*dt;
+      const kx=bh.x+ca*k.s, ky=bh.y+sa*k.s;
+      const sz=10+k.s*0.05;
+      glow(kx,ky,sz*2.4,'rgba(170,215,255,$)',0.55*m);
+      glow(kx,ky,sz*0.8,'rgba(255,255,255,$)',0.8*m);
+      // bow shock arc
+      ctx.strokeStyle='rgba(200,230,255,'+(0.45*m).toFixed(3)+')';
+      ctx.lineWidth=1.4;
+      ctx.beginPath();
+      ctx.arc(kx,ky,sz*1.5,this.A-1.1,this.A+1.1);
+      ctx.stroke();
+    });
+
+    // messengers escape from the brightest mid-jet knot
+    this.accT-=dt;
+    if(this.accT<=0 && this.knots.length){
+      const k=this.knots.reduce((a,b)=>Math.abs(b.s-L*0.5)<Math.abs(a.s-L*0.5)?b:a);
+      const kx=bh.x+ca*k.s, ky=bh.y+sa*k.s;
+      spawnEscape(kx,ky,this.A+rand(-0.12,0.12),'cr');
+      if(Math.random()<0.7) spawnEscape(kx,ky,this.A+rand(-0.25,0.25),'nu');
+      if(Math.random()<0.6) spawnEscape(kx,ky,this.A+rand(-0.3,0.3),'ga');
+      this.accT=rand(2.5,4);
+    }
+
+    // labels
+    const la=ease(phase(t,1,2.5))*m;
+    label('SMBH  ~10⁹ M☉',bh.x+30,bh.y+52,la);
+    label('accretion disk',bh.x-160,bh.y-6,la,undefined,'right');
+    label('dusty torus',bh.x-150,bh.y+80,la*0.8,'rgba(220,170,130,0.8)','right');
+    label('relativistic jet  Γ ≈ 10–30',bh.x+ca*L*0.34+70,bh.y+sa*L*0.34+40,ease(phase(t,2.5,4))*m);
+    label('knot — Fermi-I shock acceleration',bh.x+ca*L*0.58+40,bh.y+sa*L*0.58+58,ease(phase(t,4,5.5))*m);
+  },
+};
+
+// ════════════════════════ SCENE 2: TIDAL DISRUPTION EVENT ════════════════════
+const tde={
+  name:'TDE', dur:30,
+  info:'<span class="t">TIDAL DISRUPTION EVENT — JETTED TDE</span>\n'+
+       'M_BH ≈ 10⁶–10⁷ M☉ · star ~1 M☉\n'+
+       'jet Γ ~ 10 · R ~ 10¹⁴–10¹⁶ cm · B ~ 1–10 G\n'+
+       'E_max → 10²⁰ eV (internal shocks)\n'+
+       '<span class="d">Fallback accretion L ∝ t⁻⁵ᐟ³;\ne.g. Swift J1644+57, AT2019dsg (ν).</span>',
+  T:{app0:0.5,dis:5.0,wrap0:5.5,si:9.5,disk0:10.5,jet0:13,end:28},
+  init(){
+    this.bh={x:W*0.46,y:H*0.55};
+    this.rp=Math.min(W,H)*0.13;
+    this.trail=[];
+    this.stream=[];       // debris particles {th, rMul, jit, unbound}
+    for(let i=0;i<130;i++) this.stream.push({
+      off:i/130, jit:gauss()*0.05, unbound:i<26, rMul:1,
+    });
+    this.curve=[]; this.jetB=[]; this.jetT=0; this.escT=0;
+  },
+  // parabolic orbit r(th)=2rp/(1+cos th), th from -2.5 (approach) upward
+  orbPos(th,rMul){
+    const r=2*this.rp/(1+Math.cos(clamp(th,-2.7,2.7)))*(rMul||1);
+    return [this.bh.x+r*Math.cos(th+0.5), this.bh.y+r*Math.sin(th+0.5)*0.9];
+  },
+  draw(t,dt,m){
+    const {bh,T,rp}=this;
+    // orbit parameter advances fast near pericenter
+    const u=phase(t,T.app0,T.si+4);
+    const th=-2.5+5.0*Math.pow(u,1.6);
+
+    // nuclear star-cluster glow
+    glow(bh.x,bh.y,H*0.36,'rgba(90,80,140,$)',0.09*m);
+
+    // ── quiescent BH ──
+    ctx.beginPath(); ctx.arc(bh.x,bh.y,10,0,TAU); ctx.fillStyle='#000'; ctx.fill();
+    ctx.strokeStyle='rgba(200,210,255,'+(0.5*m).toFixed(3)+')';
+    ctx.lineWidth=1.2; ctx.beginPath(); ctx.arc(bh.x,bh.y,12.5,0,TAU); ctx.stroke();
+
+    // ── tidal radius marker near disruption ──
+    const rtA=ease(phase(t,T.dis-1.5,T.dis))*(1-ease(phase(t,T.si,T.si+2)))*m;
+    if(rtA>0.01){
+      ctx.save(); ctx.setLineDash([5,6]);
+      ctx.strokeStyle='rgba(255,210,130,'+(rtA*0.7).toFixed(3)+')';
+      ctx.lineWidth=1; ctx.beginPath(); ctx.arc(bh.x,bh.y,rp*1.35,0,TAU); ctx.stroke();
+      ctx.setLineDash([]); ctx.restore();
+      label('R_t — tidal radius',bh.x+rp*1.35+10,bh.y-rp*0.8,rtA,'rgba(255,220,150,0.9)');
+    }
+
+    // ── intact star (before disruption) ──
+    if(t<T.dis){
+      const [sx,sy]=this.orbPos(th);
+      // stretching as it nears pericenter
+      const str=1+2.8*ease(phase(t,T.dis-1.6,T.dis));
+      const ang=Math.atan2(sy-bh.y,sx-bh.x)+Math.PI/2;
+      ctx.save(); ctx.translate(sx,sy); ctx.rotate(ang); ctx.scale(str,1/Math.sqrt(str));
+      glow(0,0,26,'rgba(255,225,170,$)',0.75*m);
+      ctx.beginPath(); ctx.arc(0,0,9,0,TAU);
+      ctx.fillStyle='rgba(255,240,205,'+(0.95*m).toFixed(3)+')'; ctx.fill();
+      ctx.restore();
+      // dotted incoming trajectory
+      ctx.save(); ctx.setLineDash([2,7]);
+      ctx.strokeStyle='rgba(150,180,230,'+(0.35*m).toFixed(3)+')'; ctx.lineWidth=1;
+      ctx.beginPath();
+      for(let q=-2.5;q<th;q+=0.05){ const [qx,qy]=this.orbPos(q); q===-2.5?ctx.moveTo(qx,qy):ctx.lineTo(qx,qy); }
+      ctx.stroke(); ctx.setLineDash([]); ctx.restore();
+      label('star  ~1 M☉',sx+18,sy-16,ease(phase(t,1,2))*(1-phase(t,T.dis-0.8,T.dis))*m);
+    }
+
+    // ── debris stream after disruption ──
+    if(t>T.dis){
+      const spread=ease(phase(t,T.dis,T.si+3));
+      ctx.save(); ctx.globalCompositeOperation='lighter';
+      this.stream.forEach(p=>{
+        if(p.unbound){
+          // unbound half escapes outward
+          const q=th-p.off*1.5-0.15;
+          const [qx,qy]=this.orbPos(q,1+spread*(0.4+p.off*2.2));
+          glow(qx,qy,4,'rgba(255,200,140,$)',0.3*(1-p.off*2)*m*spread+0.05);
+        } else {
+          // bound half falls back and wraps
+          p.rMul=Math.max(0.55,p.rMul-dt*0.012*(1-p.off));
+          const q=th-p.off*2.1;
+          if(q<-2.5) return;
+          const [qx,qy]=this.orbPos(q,p.rMul+p.jit*0.3);
+          glow(qx,qy,5,'rgba(255,215,160,$)',0.5*m*spread);
+        }
+      });
+      ctx.restore();
+      label('debris stream',bh.x+rp*2.1,bh.y+rp*1.5,ease(phase(t,T.dis+0.5,T.dis+1.6))*(1-phase(t,T.disk0+3,T.disk0+5))*m,'rgba(255,220,170,0.9)');
+      label('unbound debris →',bh.x+rp*3.2,bh.y-rp*0.2,ease(phase(t,T.dis+1.5,T.dis+2.6))*(1-phase(t,T.disk0+2,T.disk0+4))*m*0.8,'rgba(230,190,150,0.8)');
+    }
+
+    // ── self-intersection flash ──
+    const siP=phase(t,T.si,T.si+1.8);
+    if(siP>0&&siP<1){
+      const [ix,iy]=this.orbPos(0.9,0.8);
+      const fl=(siP<0.25?siP/0.25:1-(siP-0.25)/0.75);
+      glow(ix,iy,34,'rgba(255,255,230,$)',fl*0.9*m);
+      label('stream self-intersection',ix+24,iy-14,fl*m);
+    }
+
+    // ── accretion disk builds up ──
+    const dk=ease(phase(t,T.disk0,T.disk0+3.5))*m;
+    if(dk>0.01){
+      ctx.save(); ctx.translate(bh.x,bh.y); ctx.scale(1,0.36);
+      ctx.globalCompositeOperation='lighter';
+      for(let i=0;i<26;i++){
+        const rr=14+i*1.7*(0.6+0.4*dk);
+        const heat=1-i/26;
+        const ang=t*(1.6-i*0.04)+i;
+        ctx.strokeStyle='hsla('+(30+heat*25)+',100%,'+(58+heat*30)+'%,'+(dk*(0.12+0.3*heat)).toFixed(3)+')';
+        ctx.lineWidth=2.6;
+        ctx.beginPath(); ctx.arc(0,0,rr,ang,ang+rand(1.5,2.8)); ctx.stroke();
+      }
+      ctx.restore();
+      glow(bh.x,bh.y,66,'rgba(255,235,200,$)',dk*0.4);
+      label('accretion disk — flare',bh.x-70,bh.y+62,dk*(1-phase(t,T.jet0+4,T.jet0+6)),'rgba(255,230,180,0.9)','right');
+    }
+
+    // ── relativistic jet ──
+    const jp=ease(phase(t,T.jet0,T.jet0+2.5))*m;
+    if(jp>0.01){
+      const jl=H*0.42*jp;
+      ctx.save(); ctx.globalCompositeOperation='lighter';
+      [[-1,1],[1,0.25]].forEach(([dirn,boost])=>{
+        const g=ctx.createLinearGradient(bh.x,bh.y,bh.x,bh.y+dirn*jl);
+        g.addColorStop(0,'rgba(150,190,255,'+(0.3*boost*jp).toFixed(3)+')');
+        g.addColorStop(1,'rgba(110,150,255,0)');
+        ctx.fillStyle=g; ctx.beginPath();
+        ctx.moveTo(bh.x-3,bh.y); ctx.lineTo(bh.x-jl*0.11,bh.y+dirn*jl);
+        ctx.lineTo(bh.x+jl*0.11,bh.y+dirn*jl); ctx.lineTo(bh.x+3,bh.y);
+        ctx.closePath(); ctx.fill();
+      });
+      ctx.restore();
+      // jet blobs
+      this.jetT-=dt;
+      if(this.jetT<=0){ this.jetB.push({s:14,v:rand(150,210)}); this.jetT=rand(0.9,1.5); }
+      this.jetB=this.jetB.filter(b=>b.s<H*0.44);
+      this.jetB.forEach(b=>{
+        b.s+=b.v*dt;
+        glow(bh.x,bh.y-b.s,12,'rgba(190,220,255,$)',0.65*jp);
+      });
+      label('relativistic jet  Γ ~ 10',bh.x+26,bh.y-H*0.3,ease(phase(t,T.jet0+1.5,T.jet0+3))*m);
+      label('(Swift J1644+57)',bh.x+26,bh.y-H*0.3+16,ease(phase(t,T.jet0+1.5,T.jet0+3))*m*0.7,'rgba(150,190,240,0.8)');
+      // messengers
+      this.escT-=dt;
+      if(this.escT<=0){
+        spawnEscape(bh.x,bh.y-H*0.3,-Math.PI/2+rand(-0.15,0.15),'cr');
+        if(Math.random()<0.7) spawnEscape(bh.x,bh.y-H*0.25,-Math.PI/2+rand(-0.3,0.3),'nu');
+        this.escT=rand(2.2,3.5);
+      }
+    }
+
+    // ── fallback light curve inset ──
+    const lcA=ease(phase(t,T.disk0,T.disk0+1.5))*m;
+    if(lcA>0.01){
+      const bx=W-248,by=H-160,bw=210,bh2=110;
+      ctx.save(); ctx.globalAlpha=lcA;
+      ctx.fillStyle='rgba(2,10,22,0.8)'; ctx.fillRect(bx,by,bw,bh2);
+      ctx.strokeStyle='rgba(80,140,220,0.4)'; ctx.strokeRect(bx,by,bw,bh2);
+      mono(9,'bold'); ctx.fillStyle='rgba(130,185,255,0.9)'; ctx.textAlign='left';
+      ctx.fillText('X-RAY LIGHT CURVE',bx+9,by+15);
+      mono(10); ctx.fillStyle='rgba(255,230,170,0.9)';
+      ctx.fillText('L ∝ t⁻⁵ᐟ³',bx+bw-64,by+15);
+      // curve: rise then power-law decay
+      ctx.strokeStyle='rgba(160,220,255,0.9)'; ctx.lineWidth=1.4; ctx.beginPath();
+      const tNow=phase(t,T.disk0,T.end);
+      for(let q=0;q<=tNow;q+=0.01){
+        const xx=bx+12+q*(bw-24);
+        const lum=q<0.14?Math.pow(q/0.14,2):Math.pow(q/0.14,-5/3);
+        const yy=by+bh2-12-lum*(bh2-34);
+        q===0?ctx.moveTo(xx,yy):ctx.lineTo(xx,yy);
+      }
+      ctx.stroke(); ctx.restore();
+    }
+  },
+};
+
+// ════════════════════════ SCENE 3: GAMMA-RAY BURST ════════════════════════
+const grb={
+  name:'GRB', dur:30,
+  info:'<span class="t">LONG GAMMA-RAY BURST — COLLAPSAR</span>\n'+
+       'E_iso ~ 10⁵³ erg · jet Γ ≈ 100–1000\n'+
+       'internal shocks: R ~ 10¹³–10¹⁵ cm\n'+
+       'B ~ 10³–10⁶ G · E_max ≈ 10²⁰ eV\n'+
+       '<span class="d">Colliding shells → prompt γ pulses;\nexternal shock → afterglow;\ne.g. GRB 221009A (the “BOAT”).</span>',
+  T:{col:4.0,drill0:5.0,brk:9.0,prompt0:9.3,prompt1:17,after0:13,end:28},
+  init(){
+    this.st={x:W*0.42,y:H*0.56,R:Math.min(W,H)*0.13};
+    this.cells=[];
+    for(let i=0;i<26;i++) this.cells.push({a:rand(0,TAU),r:rand(0.15,0.85),ph:rand(0,TAU),sz:rand(0.12,0.3)});
+    this.shells=[]; this.shT=0; this.pulses=[]; this.escT=0; this.flashes=[];
+  },
+  draw(t,dt,m){
+    const {st,T}=this;
+    const colP=ease(phase(t,T.col,T.col+1.2));
+    const R=st.R*(1-0.28*colP);
+
+    // ── progenitor star ──
+    const starA=(1-0.75*ease(phase(t,T.brk,T.brk+4)))*m;
+    const g=ctx.createRadialGradient(st.x,st.y,0,st.x,st.y,R);
+    g.addColorStop(0,'rgba(220,235,255,'+(0.9*starA).toFixed(3)+')');
+    g.addColorStop(0.55,'rgba(150,190,250,'+(0.55*starA).toFixed(3)+')');
+    g.addColorStop(1,'rgba(80,120,210,'+(0.12*starA).toFixed(3)+')');
+    ctx.fillStyle=g; ctx.beginPath(); ctx.arc(st.x,st.y,R,0,TAU); ctx.fill();
+    // convective mottling
+    ctx.save(); ctx.globalCompositeOperation='lighter';
+    this.cells.forEach(c=>{
+      const a=(0.10+0.08*Math.sin(c.ph+t*1.3))*starA;
+      glow(st.x+Math.cos(c.a)*R*c.r, st.y+Math.sin(c.a)*R*c.r, R*c.sz,'rgba(200,220,255,$)',a);
+    });
+    ctx.restore();
+    glow(st.x,st.y,R*2.2,'rgba(120,160,240,$)',0.16*starA);
+    label('Wolf–Rayet star  M ≈ 30 M☉',st.x,st.y+R+30,ease(phase(t,1,2.2))*(1-phase(t,T.brk,T.brk+2))*m,undefined,'center');
+
+    // ── core collapse flash ──
+    const cf=phase(t,T.col,T.col+1.4);
+    if(cf>0&&cf<1){
+      const fa=cf<0.2?cf/0.2:1-(cf-0.2)/0.8;
+      glow(st.x,st.y,R*0.75,'rgba(255,255,255,$)',fa*0.95*m);
+      label('core collapse → black hole',st.x,st.y-R-20,fa*m,undefined,'center');
+    }
+
+    // ── jet drilling through the envelope, then breakout ──
+    const drill=ease(phase(t,T.drill0,T.brk));
+    const post=phase(t,T.brk,T.end);
+    ctx.save(); ctx.globalCompositeOperation='lighter';
+    [[-1,1],[1,0.3]].forEach(([dirn,boost])=>{
+      const jl=drill<1 ? R*1.02*drill : R+post*H*0.55;
+      const wEnd=jl*(drill<1?0.16:0.10);
+      const jg=ctx.createLinearGradient(st.x,st.y,st.x,st.y+dirn*jl);
+      jg.addColorStop(0,'rgba(255,240,210,'+(0.4*boost*m).toFixed(3)+')');
+      jg.addColorStop(1,'rgba(180,200,255,'+(drill<1?0.25:0.04)*boost*m+')');
+      ctx.fillStyle=jg; ctx.beginPath();
+      ctx.moveTo(st.x-2,st.y); ctx.lineTo(st.x-wEnd,st.y+dirn*jl);
+      ctx.lineTo(st.x+wEnd,st.y+dirn*jl); ctx.lineTo(st.x+2,st.y);
+      ctx.closePath(); ctx.fill();
+      // cocoon inside star
+      if(drill>0.15&&drill<1.15)
+        glow(st.x,st.y+dirn*jl*0.8,R*0.42,'rgba(255,210,150,$)',0.35*boost*m*Math.min(1,drill*2));
+    });
+    ctx.restore();
+    if(drill>0.2&&drill<1) label('jet drills through envelope',st.x+R*0.4+14,st.y-R*0.55,m*ease(phase(drill,0.25,0.55)));
+
+    // ── breakout flash ──
+    const bf=phase(t,T.brk,T.brk+1.0);
+    if(bf>0&&bf<1){
+      const fa=bf<0.2?bf/0.2:1-(bf-0.2)/0.8;
+      glow(st.x,st.y-R,R*0.8,'rgba(255,255,255,$)',fa*m);
+      label('jet breakout',st.x+R*0.35,st.y-R*1.25,fa*m);
+    }
+
+    // ── prompt phase: internal shocks between shells ──
+    if(t>T.prompt0&&t<T.prompt1){
+      this.shT-=dt;
+      if(this.shT<=0){
+        this.shells.push({s:R*1.05,v:rand(170,330)});
+        this.shT=rand(0.55,1.0);
+      }
+    }
+    this.shells=this.shells.filter(s=>s.s<H*0.62);
+    // collisions: faster shells catch slower ones
+    for(let i=0;i<this.shells.length;i++){
+      const a=this.shells[i];
+      a.s+=a.v*dt;
+      for(let j=0;j<this.shells.length;j++){
+        if(i===j) continue;
+        const b=this.shells[j];
+        if(Math.abs(a.s-b.s)<9 && a.v>b.v+20){
+          const cs=(a.s+b.s)/2;
+          this.flashes.push({s:cs,age:0});
+          this.pulses.push({t:t,amp:rand(0.5,1)});
+          a.v=b.v=(a.v+b.v)/2;
+          if(Math.random()<0.65) spawnEscape(st.x,st.y-cs,-Math.PI/2+rand(-0.14,0.14),'cr');
+          if(Math.random()<0.5) spawnEscape(st.x,st.y-cs,-Math.PI/2+rand(-0.3,0.3),'nu');
+        }
+      }
+    }
+    ctx.save(); ctx.globalCompositeOperation='lighter';
+    this.shells.forEach(s=>{
+      const wj=s.s*0.10;
+      ctx.strokeStyle='rgba(210,230,255,'+(0.6*m).toFixed(3)+')';
+      ctx.lineWidth=2.4;
+      ctx.beginPath(); ctx.moveTo(st.x-wj,st.y-s.s); ctx.lineTo(st.x+wj,st.y-s.s); ctx.stroke();
+    });
+    this.flashes=this.flashes.filter(f=>(f.age+=dt)<0.7);
+    this.flashes.forEach(f=>{
+      glow(st.x,st.y-f.s,26,'rgba(255,255,235,$)',(1-f.age/0.7)*0.9*m);
+    });
+    ctx.restore();
+    if(t>T.prompt0+1.5&&t<T.prompt1+2)
+      label('internal shocks → prompt γ',st.x+70,st.y-H*0.34,m*ease(phase(t,T.prompt0+1.5,T.prompt0+2.5)));
+
+    // ── afterglow: decelerating external shock ──
+    const agP=phase(t,T.after0,T.end);
+    if(agP>0){
+      const agR=Math.pow(agP,0.4)*H*0.30;
+      const agA=(1-agP)*0.5*m;
+      ctx.save(); ctx.globalCompositeOperation='lighter';
+      ctx.strokeStyle='rgba(255,'+(Math.round(190-110*agP))+','+(Math.round(120-70*agP))+','+agA.toFixed(3)+')';
+      ctx.lineWidth=4;
+      ctx.beginPath(); ctx.arc(st.x,st.y-H*0.45,agR,0,TAU); ctx.stroke();
+      ctx.restore();
+      label('external shock — afterglow',st.x+agR*0.75,st.y-H*0.45-agR*0.75,m*ease(phase(t,T.after0+2,T.after0+3.5))*(1-agP*0.7),'rgba(255,190,140,0.9)');
+    }
+
+    // ── gamma-ray light curve inset (BATSE-style spikes) ──
+    const lcA=ease(phase(t,T.prompt0,T.prompt0+1))*m;
+    if(lcA>0.01){
+      const bx=W-248,by=H-160,bw=210,bh2=110;
+      ctx.save(); ctx.globalAlpha=lcA;
+      ctx.fillStyle='rgba(2,10,22,0.8)'; ctx.fillRect(bx,by,bw,bh2);
+      ctx.strokeStyle='rgba(80,140,220,0.4)'; ctx.strokeRect(bx,by,bw,bh2);
+      mono(9,'bold'); ctx.fillStyle='rgba(130,185,255,0.9)'; ctx.textAlign='left';
+      ctx.fillText('γ-RAY COUNT RATE',bx+9,by+15);
+      ctx.strokeStyle='rgba(255,200,140,0.95)'; ctx.lineWidth=1.2; ctx.beginPath();
+      const t0=T.prompt0, span=T.end-t0;
+      let first=true;
+      for(let q=t0;q<=Math.min(t,T.end);q+=0.05){
+        let v=0.03;
+        this.pulses.forEach(p=>{
+          const dtp=q-p.t;
+          if(dtp>0) v+=p.amp*Math.exp(-dtp/0.55)*(dtp<0.1?dtp/0.1:1);
+        });
+        const xx=bx+12+(q-t0)/span*(bw-24);
+        const yy=by+bh2-12-clamp(v,0,1.6)/1.6*(bh2-34);
+        first?ctx.moveTo(xx,yy):ctx.lineTo(xx,yy); first=false;
+      }
+      ctx.stroke(); ctx.restore();
+    }
+  },
+};
+
+// ════════════════════════ Scene manager ════════════════════════
+const scenes=[blazar,tde,grb];
+let cur=0, sceneT0=0, elapsed=0, prevTs=null;
+const infoEl=document.getElementById('info');
+const btns=[...document.querySelectorAll('#picker button')];
+
+function switchTo(i){
+  cur=i; sceneT0=elapsed; escapes=[];
+  scenes[cur].init();
+  infoEl.innerHTML=scenes[cur].info;
+  btns.forEach((b,k)=>b.classList.toggle('on',k===cur));
+}
+btns.forEach(b=>b.addEventListener('click',()=>switchTo(+b.dataset.i)));
+
+function buildStars(){
+  stars=Array.from({length:Math.floor(W*H/4200)},()=>({
+    x:Math.random()*W,y:Math.random()*H,r:rand(0.3,1.3),ph:rand(0,TAU),sp:rand(0.5,2),
+  }));
+}
+function frame(ts){
+  if(prevTs===null) prevTs=ts;
+  const dt=Math.min(0.05,(ts-prevTs)/1000); prevTs=ts;
+  elapsed+=dt;
+  const t=elapsed-sceneT0;
+  if(t>scenes[cur].dur) switchTo((cur+1)%scenes.length);
+
+  const m=ease(phase(t,0,1))*(1-ease(phase(t,scenes[cur].dur-1.3,scenes[cur].dur)));
+
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  ctx.fillStyle='#010208'; ctx.fillRect(0,0,W,H);
+  stars.forEach(s=>{
+    const a=0.25+0.35*Math.sin(s.ph+elapsed*s.sp);
+    ctx.fillStyle='rgba(220,235,255,'+a.toFixed(3)+')';
+    ctx.beginPath(); ctx.arc(s.x,s.y,s.r,0,TAU); ctx.fill();
+  });
+
+  scenes[cur].draw(t,dt,m);
+  drawEscapes(dt,m);
+  infoEl.style.opacity=m;
+
+  requestAnimationFrame(frame);
+}
+
+function init(){
+  dpr=Math.min(2,window.devicePixelRatio||1);
+  W=innerWidth; H=innerHeight;
+  canvas.width=W*dpr; canvas.height=H*dpr;
+  canvas.style.width=W+'px'; canvas.style.height=H+'px';
+  buildStars();
+  scenes[cur].init();
+}
+let rsz;
+addEventListener('resize',()=>{clearTimeout(rsz);rsz=setTimeout(init,150);});
+init();
+switchTo(0);
+requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
