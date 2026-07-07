@@ -18,7 +18,7 @@ The cosmic-ray energy spectrum spans more than ten decades in energy and falls r
 
 - **The ankle** (~5×10¹⁸ eV) — a hardening of the spectrum, commonly interpreted as the transition to an extragalactic population or a signature of proton pair-production on cosmic photon backgrounds.
 - **The instep** (~10¹⁹ eV) — a softening feature revealed by high-statistics measurements of the Pierre Auger Observatory.
-- **The suppression** (~5×10¹⁹ eV) — a strong steepening of the flux, consistent with the **GZK effect** (interaction of protons with the cosmic microwave background) and/or with the maximum energy attainable at the sources.
+- **The suppression** (~5×10¹⁹ eV) — a strong steepening of the flux, consistent with the **[GZK effect](/propagation/processes/)** (interaction of protons with the cosmic microwave background) and/or with the maximum energy attainable at the sources.
 
 ## Why extragalactic?
 

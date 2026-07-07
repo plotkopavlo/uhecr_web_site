@@ -1,0 +1,620 @@
+---
+layout: null
+permalink: /propagation/
+---
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>UHECR Propagation — GZK, Photodisintegration, Magnetic Deflection | uhecrs.com</title>
+  <meta name="description" content="Animated visualizations of ultra-high-energy cosmic-ray propagation: GZK photopion production on the CMB, photodisintegration of nuclei, and magnetic deflection in the cosmic web.">
+  <link rel="canonical" href="https://uhecrs.com/propagation/">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { height: 100%; }
+    body { background: #000; overflow: hidden; font-family: 'Helvetica Neue', Arial, sans-serif; }
+    canvas { display: block; }
+    #overlay { position: fixed; inset: 0; pointer-events: none; }
+    #head { position: absolute; top: 20px; left: 50%; transform: translateX(-50%); text-align: center; }
+    #head h1 {
+      font-size: clamp(1.2rem, 3vw, 2rem); font-weight: 100;
+      letter-spacing: 0.5em; margin-right: -0.5em; color: #fff;
+      text-shadow: 0 0 34px rgba(80,160,255,0.9);
+    }
+    #head p {
+      font-size: clamp(0.55rem, 1.1vw, 0.72rem); color: rgba(150,205,255,0.65);
+      letter-spacing: 0.3em; margin-right: -0.3em; text-transform: uppercase; margin-top: 6px;
+    }
+    #back, #to3d {
+      position: absolute; top: 22px; pointer-events: auto;
+      color: rgba(155,205,255,0.8); text-decoration: none;
+      font-size: 0.7rem; letter-spacing: 0.14em; text-transform: uppercase;
+      border: 1px solid rgba(100,160,230,0.28); border-radius: 3px;
+      padding: 6px 12px; background: rgba(4,12,26,0.5);
+    }
+    #back { left: 20px; }
+    #to3d { right: 20px; }
+    #back:hover, #to3d:hover { color: #fff; border-color: rgba(160,210,255,0.7); }
+    #picker {
+      position: absolute; top: 108px; left: 50%; transform: translateX(-50%);
+      display: flex; gap: 10px; pointer-events: auto; flex-wrap: wrap; justify-content: center;
+    }
+    #picker button {
+      font-family: inherit; cursor: pointer;
+      color: rgba(155,205,255,0.75); background: rgba(4,12,26,0.5);
+      border: 1px solid rgba(100,160,230,0.28); border-radius: 3px;
+      font-size: clamp(0.55rem, 1vw, 0.7rem); letter-spacing: 0.15em;
+      text-transform: uppercase; padding: 7px 15px; transition: all 0.25s;
+    }
+    #picker button:hover { color: #fff; }
+    #picker button.on {
+      color: #fff; border-color: rgba(160,210,255,0.85);
+      background: rgba(30,70,140,0.55);
+      box-shadow: 0 0 18px rgba(80,160,255,0.35);
+    }
+    #info {
+      position: absolute; left: 16px; bottom: 16px; pointer-events: auto;
+      font-family: 'Courier New', monospace;
+      font-size: 11px; line-height: 17px;
+      color: rgba(160,215,255,0.9);
+      background: rgba(2,12,24,0.6);
+      border: 1px solid rgba(80,150,220,0.35);
+      padding: 11px 15px; max-width: 330px;
+      white-space: pre-wrap;
+    }
+    #info .t { color: #fff; font-weight: bold; }
+    #info .d { color: rgba(120,170,225,0.75); }
+    #info a { color: #7db8ff; }
+    #info a:hover { color: #fff; }
+    @media (max-width: 640px) { #info { font-size: 9px; line-height: 14px; max-width: 240px; } }
+  </style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="overlay">
+  <a id="back" href="/">&#8592; uhecrs.com</a>
+  <a id="to3d" href="/propagation-3d/">3D version &#8594;</a>
+  <div id="head">
+    <h1>PROPAGATION</h1>
+    <p>From source to Earth across the cosmic web</p>
+  </div>
+  <div id="picker">
+    <button data-i="0">GZK — energy losses</button>
+    <button data-i="1">Photodisintegration</button>
+    <button data-i="2">Magnetic deflection</button>
+  </div>
+  <div id="info"></div>
+</div>
+<script>
+(function () {
+'use strict';
+const canvas=document.getElementById('c');
+const ctx=canvas.getContext('2d');
+const TAU=Math.PI*2;
+const clamp=(v,a,b)=>v<a?a:v>b?b:v;
+const phase=(t,a,b)=>clamp((t-a)/(b-a),0,1);
+const lerp=(a,b,t)=>a+(b-a)*t;
+const ease=t=>t<0.5?2*t*t:-1+(4-2*t)*t;
+const rand=(a,b)=>a+Math.random()*(b-a);
+const gauss=()=>(Math.random()+Math.random()+Math.random()-1.5)/1.5;
+
+let W,H,dpr,stars;
+function mono(s,w){ ctx.font=(w?w+' ':'')+s+'px "Courier New", monospace'; }
+function glow(x,y,r,col,a){
+  if(a<=0.004) return;
+  const g=ctx.createRadialGradient(x,y,0,x,y,r);
+  g.addColorStop(0,col.replace('$',a.toFixed(3)));
+  g.addColorStop(1,col.replace('$','0'));
+  ctx.fillStyle=g; ctx.beginPath(); ctx.arc(x,y,r,0,TAU); ctx.fill();
+}
+function label(txt,x,y,a,col,align){
+  if(a<=0.01) return;
+  ctx.save(); ctx.globalAlpha=a; mono(11);
+  ctx.fillStyle=col||'rgba(190,220,255,0.9)';
+  ctx.textAlign=align||'left'; ctx.fillText(txt,x,y); ctx.restore();
+}
+
+// journey endpoints, source & Earth
+function ends(){ return {x0:W*0.10, x1:W*0.895, y:H*0.55}; }
+function drawSource(x,y,m,name){
+  glow(x,y,44,'rgba(255,220,170,$)',0.5*m);
+  ctx.beginPath(); ctx.arc(x,y,5,0,TAU); ctx.fillStyle='#000'; ctx.fill();
+  ctx.strokeStyle='rgba(255,235,200,'+(0.8*m).toFixed(3)+')';
+  ctx.lineWidth=1; ctx.beginPath(); ctx.arc(x,y,7,0,TAU); ctx.stroke();
+  ctx.save(); ctx.globalCompositeOperation='lighter';
+  ctx.strokeStyle='rgba(140,190,255,'+(0.55*m).toFixed(3)+')';
+  ctx.lineWidth=2;
+  ctx.beginPath(); ctx.moveTo(x-4,y-8); ctx.lineTo(x-16,y-34); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(x+4,y+8); ctx.lineTo(x+16,y+34); ctx.stroke();
+  ctx.restore();
+  label(name||'SOURCE (AGN)',x,y+58,0.8*m,undefined,'center');
+}
+function drawEarth(x,y,m){
+  glow(x,y,34,'rgba(120,190,255,$)',0.5*m);
+  const g=ctx.createRadialGradient(x-4,y-4,0,x,y,13);
+  g.addColorStop(0,'rgba(140,200,255,'+(0.95*m).toFixed(3)+')');
+  g.addColorStop(0.6,'rgba(50,110,210,'+(0.9*m).toFixed(3)+')');
+  g.addColorStop(1,'rgba(20,60,140,'+(0.85*m).toFixed(3)+')');
+  ctx.fillStyle=g; ctx.beginPath(); ctx.arc(x,y,13,0,TAU); ctx.fill();
+  label('EARTH',x,y+40,0.8*m,undefined,'center');
+}
+function drawRuler(m){
+  const {x0,x1}=ends(); const y=H*0.87;
+  ctx.save(); ctx.globalAlpha=0.5*m;
+  ctx.strokeStyle='rgba(110,160,220,0.7)'; ctx.lineWidth=1;
+  ctx.beginPath(); ctx.moveTo(x0,y); ctx.lineTo(x1,y); ctx.stroke();
+  mono(9); ctx.fillStyle='rgba(110,165,230,1)'; ctx.textAlign='center';
+  for(let i=0;i<=4;i++){
+    const xx=lerp(x0,x1,i/4);
+    ctx.beginPath(); ctx.moveTo(xx,y-4); ctx.lineTo(xx,y+4); ctx.stroke();
+    ctx.fillText((i*25)+' Mpc',xx,y+18);
+  }
+  ctx.restore();
+}
+
+// secondaries (cosmogenic messengers)
+let secs=[];
+function spawnSec(x,y,ang,type){ secs.push({x,y,dx:Math.cos(ang),dy:Math.sin(ang),age:0,life:1.5,type}); }
+function drawSecs(dt,m){
+  secs=secs.filter(s=>(s.age+=dt)<s.life);
+  ctx.save(); ctx.globalCompositeOperation='lighter';
+  secs.forEach(s=>{
+    const d=s.age*300, a=(1-s.age/s.life)*m;
+    const hx=s.x+s.dx*d, hy=s.y+s.dy*d;
+    if(s.type==='nu'){
+      ctx.setLineDash([5,6]); ctx.lineDashOffset=-s.age*240;
+      ctx.strokeStyle='rgba(140,255,190,'+(a*0.7).toFixed(3)+')'; ctx.lineWidth=1.2;
+      ctx.beginPath(); ctx.moveTo(s.x,s.y); ctx.lineTo(hx,hy); ctx.stroke();
+      ctx.setLineDash([]);
+      label('ν',hx+7,hy,a*0.85,'rgba(140,255,190,0.95)');
+    } else if(s.type==='ga'){
+      ctx.strokeStyle='rgba(255,150,255,'+(a*0.6).toFixed(3)+')'; ctx.lineWidth=1.1;
+      const px=-s.dy,py=s.dx;
+      ctx.beginPath();
+      for(let q=0;q<=d;q+=5){
+        const wx=s.x+s.dx*q+px*Math.sin(q*0.3)*3.5, wy=s.y+s.dy*q+py*Math.sin(q*0.3)*3.5;
+        q===0?ctx.moveTo(wx,wy):ctx.lineTo(wx,wy);
+      }
+      ctx.stroke();
+      label('γ',hx+7,hy,a*0.85,'rgba(255,160,255,0.95)');
+    } else { // e+e- pair
+      glow(hx,hy,5,'rgba(180,220,255,$)',a*0.6);
+    }
+  });
+  ctx.restore();
+}
+
+// photon bath dots
+function makeBath(n,hue){
+  return Array.from({length:n},()=>({
+    x:Math.random()*W,y:Math.random()*H,ph:rand(0,TAU),sp:rand(0.3,1),
+    vx:rand(-4,4),vy:rand(-4,4),hue,
+  }));
+}
+function drawBath(bath,dt,m,aMax){
+  bath.forEach(p=>{
+    p.x=(p.x+p.vx*dt+W)%W; p.y=(p.y+p.vy*dt+H)%H;
+    const a=(0.12+0.10*Math.sin(p.ph+performance.now()/1000*p.sp))*m*aMax;
+    ctx.fillStyle='hsla('+p.hue+',85%,72%,'+a.toFixed(3)+')';
+    ctx.beginPath(); ctx.arc(p.x,p.y,1.1,0,TAU); ctx.fill();
+  });
+}
+
+// ════════════ SCENE 1: GZK — proton energy losses ════════════
+const gzk={
+  dur:26, JT0:1.5, JT1:21,
+  info:'<span class="t">GZK EFFECT — PHOTOPION PRODUCTION</span>\n'+
+       'p + γ_CMB → Δ⁺ → p π⁰ / n π⁺\n'+
+       'threshold E ≈ 5×10¹⁹ eV · Δloss ≈ 20% per int.\n'+
+       'loss length ~ 20 Mpc → horizon ~ 100–200 Mpc\n'+
+       '<span class="d">Also e⁺e⁻ pair production (gentler,\nloss length ~ Gpc). π decay → cosmogenic\nν and γ. Predicted 1966 (Greisen; Zatsepin\n& Kuzmin), observed as flux suppression.</span>\n'+
+       '<a href="/propagation/processes/">read more →</a>',
+  init(){
+    this.bath=makeBath(Math.floor(W*H/9000),8);
+    // precompute interaction history
+    this.events=[]; this.curve=[];
+    let E=Math.pow(10,20.6), u=0;
+    while(u<1){
+      this.curve.push({u,E});
+      if(E>5e19){
+        u+=rand(0.07,0.13);
+        if(u>=1) break;
+        E*=rand(0.75,0.82);
+        this.events.push({u,type:'pion',E});
+      } else {
+        u+=0.05;
+        E*=0.985;                              // pair production, adiabatic
+        if(u<1) this.events.push({u,type:'pair',E});
+      }
+    }
+    this.curve.push({u:1,E});
+    this.done=new Set();
+  },
+  E(u){
+    let E=Math.pow(10,20.6);
+    this.events.forEach(e=>{ if(e.u<=u) E=e.E; });
+    return E;
+  },
+  draw(t,dt,m){
+    const {x0,x1,y}=ends();
+    drawBath(this.bath,dt,m,1);
+    label('CMB photon bath — 411 γ/cm³, T = 2.7 K',W*0.5,H*0.20,0.55*m,'rgba(255,170,150,0.85)','center');
+    drawSource(x0,y,m); drawEarth(x1,y,m); drawRuler(m);
+
+    const u=phase(t,this.JT0,this.JT1);
+    const px=lerp(x0+16,x1-18,u), py=y+Math.sin(u*9)*6;
+
+    // trail
+    ctx.save(); ctx.globalCompositeOperation='lighter';
+    ctx.strokeStyle='rgba(150,200,255,'+(0.30*m).toFixed(3)+')'; ctx.lineWidth=1.4;
+    ctx.beginPath();
+    for(let q=0;q<=u;q+=0.01) ctx.lineTo(lerp(x0+16,x1-18,q),y+Math.sin(q*9)*6);
+    ctx.stroke(); ctx.restore();
+
+    // interactions
+    this.events.forEach((e,i)=>{
+      if(u>=e.u && !this.done.has(i)){
+        this.done.add(i);
+        const ex=lerp(x0+16,x1-18,e.u), ey=y+Math.sin(e.u*9)*6;
+        if(e.type==='pion'){
+          spawnSec(ex,ey,rand(-0.8,-0.2),'nu');
+          spawnSec(ex,ey,rand(0.2,0.8),'ga');
+        } else if(Math.random()<0.4) spawnSec(ex,ey,rand(-0.6,0.6),'pair');
+      }
+      if(u>=e.u && u<e.u+0.02 && e.type==='pion'){
+        const ex=lerp(x0+16,x1-18,e.u), ey=y+Math.sin(e.u*9)*6;
+        glow(ex,ey,30,'rgba(255,255,230,$)',0.85*m);
+        label('p + γ → Δ⁺ → N + π',ex,ey-30,m,undefined,'center');
+      }
+    });
+
+    // proton (color encodes energy)
+    if(u>0&&u<1){
+      const E=this.E(u);
+      const heat=clamp((Math.log10(E)-19)/1.6,0,1);
+      glow(px,py,14,'rgba(255,255,255,$)',(0.4+0.5*heat)*m);
+      ctx.beginPath(); ctx.arc(px,py,3,0,TAU);
+      ctx.fillStyle='hsla('+(200+40*(1-heat))+',95%,'+(60+30*heat)+'%,'+m.toFixed(3)+')'; ctx.fill();
+      label('p   E = 10^'+Math.log10(E).toFixed(1)+' eV',px+14,py-14,0.9*m,'rgba(255,255,210,0.95)');
+    }
+    if(u>=1){ glow(x1,y,26,'rgba(180,225,255,$)',(1-phase(t,this.JT1,this.JT1+1.2))*0.9*m); }
+    if(t>this.JT1+2.5) { this.done.clear(); }   // allow restart on loop
+
+    // E–D inset
+    const bx=W-262,by=H-176,bw=224,bh2=122;
+    ctx.save(); ctx.globalAlpha=m;
+    ctx.fillStyle='rgba(2,10,22,0.8)'; ctx.fillRect(bx,by,bw,bh2);
+    ctx.strokeStyle='rgba(80,140,220,0.4)'; ctx.strokeRect(bx,by,bw,bh2);
+    mono(9,'bold'); ctx.fillStyle='rgba(130,185,255,0.9)'; ctx.textAlign='left';
+    ctx.fillText('ENERGY vs DISTANCE',bx+9,by+15);
+    // GZK threshold line
+    const yOf=E=>by+bh2-14-(Math.log10(E)-19.3)/1.4*(bh2-40);
+    ctx.setLineDash([3,4]);
+    ctx.strokeStyle='rgba(255,190,120,0.7)';
+    ctx.beginPath(); ctx.moveTo(bx+10,yOf(5e19)); ctx.lineTo(bx+bw-10,yOf(5e19)); ctx.stroke();
+    ctx.setLineDash([]);
+    mono(8); ctx.fillStyle='rgba(255,190,120,0.85)';
+    ctx.fillText('5×10¹⁹ eV (GZK)',bx+12,yOf(5e19)-4);
+    ctx.strokeStyle='rgba(160,220,255,0.95)'; ctx.lineWidth=1.4; ctx.beginPath();
+    let first=true, prevE=null;
+    this.curve.forEach(c=>{
+      if(c.u>u) return;
+      const xx=bx+10+c.u*(bw-20);
+      if(prevE!==null){ ctx.lineTo(xx,yOf(prevE)); }
+      ctx.lineTo(xx,yOf(c.E));
+      if(first){ctx.moveTo(xx,yOf(c.E));first=false;}
+      prevE=c.E;
+    });
+    ctx.stroke(); ctx.restore();
+  },
+};
+
+// ════════════ SCENE 2: PHOTODISINTEGRATION ════════════
+const photo={
+  dur:26, JT0:1.5, JT1:21,
+  info:'<span class="t">PHOTODISINTEGRATION OF NUCLEI</span>\n'+
+       'A + γ_CMB/EBL → (A−1) + n, (A−2) + 2n, …\n'+
+       'giant dipole resonance: ε′ ≈ 10–30 MeV\n'+
+       'E/A roughly conserved → rigidity survives\n'+
+       '<span class="d">Iron and protons travel farthest;\nintermediate nuclei are fragile.\nEBL (infrared) photons dominate\nbelow the CMB threshold.</span>\n'+
+       '<a href="/propagation/processes/">read more →</a>',
+  init(){
+    this.bath=makeBath(Math.floor(W*H/9000),8);
+    this.ebl=makeBath(Math.floor(W*H/16000),28);
+    // nucleon blob
+    this.nucleons=[];
+    for(let i=0;i<26;i++){
+      const a=rand(0,TAU), r=Math.sqrt(Math.random())*11;
+      this.nucleons.push({ox:Math.cos(a)*r,oy:Math.sin(a)*r,p:Math.random()<0.46,gone:false,vx:0,vy:0,fx:0,fy:0,age:0});
+    }
+    // ejection events
+    this.events=[]; let u=0.12, A=56;
+    while(u<0.95 && A>30){
+      const n=1+(Math.random()<0.3?1:0);
+      A-=n; this.events.push({u,n,A});
+      u+=rand(0.09,0.16);
+    }
+    this.done=new Set(); this.shake=0;
+  },
+  A(u){ let A=56; this.events.forEach(e=>{if(e.u<=u)A=e.A;}); return A; },
+  draw(t,dt,m){
+    const {x0,x1,y}=ends();
+    drawBath(this.bath,dt,m,0.8);
+    drawBath(this.ebl,dt,m,1);
+    label('CMB + EBL (infrared) photons',W*0.5,H*0.20,0.55*m,'rgba(255,200,150,0.85)','center');
+    drawSource(x0,y,m,'SOURCE'); drawEarth(x1,y,m); drawRuler(m);
+
+    const u=phase(t,this.JT0,this.JT1);
+    const px=lerp(x0+18,x1-20,u), py=y+Math.sin(u*7)*5;
+    this.shake=Math.max(0,this.shake-dt*2.2);
+
+    // incoming photon + ejections
+    this.events.forEach((e,i)=>{
+      // photon approaches just before the event
+      if(u>e.u-0.035&&u<e.u){
+        const pr=phase(u,e.u-0.035,e.u);
+        const ang=(i%2?1:-1)*0.9;
+        const fx=px+Math.cos(ang)*90*(1-pr), fy=py-90*(1-pr)*(i%2?1:-1);
+        ctx.strokeStyle='rgba(255,190,120,'+(0.8*m).toFixed(3)+')'; ctx.lineWidth=1.1;
+        ctx.beginPath();
+        for(let q=0;q<20;q+=3){
+          const wx=fx+(px-fx)*q/20, wy=fy+(py-fy)*q/20+Math.sin(q*1.4)*3;
+          q===0?ctx.moveTo(wx,wy):ctx.lineTo(wx,wy);
+        }
+        ctx.stroke();
+        label('γ',fx,fy-6,0.8*m,'rgba(255,200,140,0.9)');
+      }
+      if(u>=e.u&&!this.done.has(i)){
+        this.done.add(i);
+        this.shake=1;
+        let ej=0;
+        this.nucleons.forEach(nc=>{
+          if(!nc.gone&&ej<e.n&&Math.hypot(nc.ox,nc.oy)>7){
+            nc.gone=true; ej++;
+            const a=rand(0,TAU);
+            nc.fx=px+nc.ox; nc.fy=py+nc.oy;
+            nc.vx=Math.cos(a)*rand(40,80); nc.vy=Math.sin(a)*rand(40,80)-20;
+            nc.age=0;
+          }
+        });
+      }
+      if(u>=e.u&&u<e.u+0.015) glow(px,py,26,'rgba(255,255,225,$)',0.8*m);
+    });
+
+    // free nucleons flying away
+    this.nucleons.forEach(nc=>{
+      if(!nc.gone) return;
+      nc.age+=dt; nc.fx+=nc.vx*dt; nc.fy+=nc.vy*dt;
+      const a=clamp(1-nc.age/2.2,0,1)*m;
+      if(a>0.01){
+        ctx.beginPath(); ctx.arc(nc.fx,nc.fy,2.6,0,TAU);
+        ctx.fillStyle=nc.p?'rgba(255,150,130,'+a.toFixed(3)+')':'rgba(170,190,220,'+a.toFixed(3)+')';
+        ctx.fill();
+      }
+    });
+
+    // nucleus
+    if(u>0&&u<1){
+      glow(px,py,26,'rgba(255,220,170,$)',0.4*m);
+      this.nucleons.forEach(nc=>{
+        if(nc.gone) return;
+        const jx=gauss()*this.shake*3, jy=gauss()*this.shake*3;
+        ctx.beginPath(); ctx.arc(px+nc.ox+jx,py+nc.oy+jy,3,0,TAU);
+        ctx.fillStyle=nc.p?'rgba(255,140,120,'+(0.95*m).toFixed(3)+')':'rgba(160,185,220,'+(0.95*m).toFixed(3)+')';
+        ctx.fill();
+      });
+      const A=this.A(u);
+      label('A = '+A+'  (⁵⁶Fe → …)',px+22,py-24,0.9*m,'rgba(255,230,180,0.95)');
+      label('E/A ≈ const',px+22,py-9,0.6*m,'rgba(190,210,240,0.8)');
+    }
+
+    // A–D inset
+    const bx=W-262,by=H-176,bw=224,bh2=122;
+    ctx.save(); ctx.globalAlpha=m;
+    ctx.fillStyle='rgba(2,10,22,0.8)'; ctx.fillRect(bx,by,bw,bh2);
+    ctx.strokeStyle='rgba(80,140,220,0.4)'; ctx.strokeRect(bx,by,bw,bh2);
+    mono(9,'bold'); ctx.fillStyle='rgba(130,185,255,0.9)'; ctx.textAlign='left';
+    ctx.fillText('MASS NUMBER vs DISTANCE',bx+9,by+15);
+    ctx.strokeStyle='rgba(255,210,150,0.95)'; ctx.lineWidth=1.4; ctx.beginPath();
+    const yA=A=>by+bh2-14-(A-28)/30*(bh2-40);
+    ctx.moveTo(bx+10,yA(56));
+    let pA=56;
+    this.events.forEach(e=>{
+      if(e.u>u) return;
+      const xx=bx+10+e.u*(bw-20);
+      ctx.lineTo(xx,yA(pA)); ctx.lineTo(xx,yA(e.A)); pA=e.A;
+    });
+    ctx.lineTo(bx+10+Math.min(u,1)*(bw-20),yA(pA));
+    ctx.stroke(); ctx.restore();
+  },
+};
+
+// ════════════ SCENE 3: MAGNETIC DEFLECTION ════════════
+const mag={
+  dur:28, JT0:1.5, JT1:20,
+  info:'<span class="t">MAGNETIC DEFLECTION & TIME DELAY</span>\n'+
+       'voids: B ≲ 1 nG · filaments/clusters: 10–100 nG\n'+
+       'Galactic field: B ~ few µG\n'+
+       'δθ ≈ few° × Z × (E/10²⁰ eV)⁻¹\n'+
+       '<span class="d">Neutrinos and photons travel straight —\ncharged CRs random-walk through the\ncosmic web; time delays 10³–10⁵ yr hide\ntransient sources. Rigidity R = E/Z rules.</span>\n'+
+       '<a href="/propagation/processes/">read more →</a>',
+  init(){
+    // cosmic web filaments
+    this.fil=[];
+    for(let i=0;i<7;i++){
+      const pts=[];
+      let fx=rand(-40,W*0.2), fy=rand(H*0.15,H*0.85);
+      while(fx<W+40){ pts.push([fx,fy]); fx+=rand(60,130); fy+=gauss()*70; fy=clamp(fy,H*0.1,H*0.92); }
+      this.fil.push(pts);
+    }
+    this.clusters=Array.from({length:5},()=>{
+      const f=this.fil[Math.floor(Math.random()*this.fil.length)];
+      const p=f[Math.floor(rand(1,f.length-1))];
+      return {x:p[0],y:p[1],r:rand(30,60)};
+    });
+    // B field proxy: near filament → strong
+    const nearFil=(x,y)=>{
+      let dmin=1e9;
+      this.fil.forEach(pts=>pts.forEach(p=>{const d=Math.hypot(x-p[0],y-p[1]);if(d<dmin)dmin=d;}));
+      return dmin;
+    };
+    // precompute trajectories for 3 particles of different rigidity
+    const {x0,x1,y}=ends();
+    this.trajs=[
+      {name:'p  10²⁰·⁵ eV',col:'rgba(180,225,255,0.95)',R:16,dots:[]},
+      {name:'p  10¹⁹·⁵ eV',col:'rgba(120,180,255,0.9)',R:4,dots:[]},
+      {name:'Fe 10²⁰ eV  (Z=26)',col:'rgba(255,180,120,0.9)',R:1.1,dots:[]},
+    ];
+    this.trajs.forEach(tr=>{
+      let px=x0+14,py=y,ang=0,ang0=(Math.random()-0.5)*0.15;
+      ang=ang0;
+      tr.path=[[px,py]];
+      while(px<x1-16){
+        const d=nearFil(px,py);
+        const Bamp=(d<50?0.5:d<110?0.18:0.05)/tr.R;
+        ang+=gauss()*Bamp; ang=clamp(ang,-1.0,1.0);
+        // gentle pull toward Earth line so everything arrives
+        ang+=( (y-py)*0.0004 + -ang*0.02 );
+        px+=Math.cos(ang)*13; py+=Math.sin(ang)*13;
+        tr.path.push([px,py]);
+      }
+      tr.defl=Math.abs(py-y)+rand(4,10)*(1/tr.R)*8;
+    });
+    this.arr=new Set();
+  },
+  draw(t,dt,m){
+    const {x0,x1,y}=ends();
+    // cosmic web
+    ctx.save();
+    this.fil.forEach(pts=>{
+      ctx.strokeStyle='rgba(90,110,200,'+(0.16*m).toFixed(3)+')';
+      ctx.lineWidth=14; ctx.lineJoin='round';
+      ctx.beginPath(); pts.forEach((p,i)=>i===0?ctx.moveTo(p[0],p[1]):ctx.lineTo(p[0],p[1])); ctx.stroke();
+      ctx.strokeStyle='rgba(130,150,235,'+(0.22*m).toFixed(3)+')';
+      ctx.lineWidth=3;
+      ctx.beginPath(); pts.forEach((p,i)=>i===0?ctx.moveTo(p[0],p[1]):ctx.lineTo(p[0],p[1])); ctx.stroke();
+    });
+    this.clusters.forEach(c=>glow(c.x,c.y,c.r,'rgba(160,170,255,$)',0.30*m));
+    ctx.restore();
+    label('filaments · B ~ 10–100 nG',W*0.36,H*0.14,0.6*m,'rgba(150,165,245,0.9)','center');
+    label('voids · B ≲ 1 nG',W*0.68,H*0.30,0.5*m,'rgba(120,140,210,0.8)','center');
+
+    drawSource(x0,y,m); drawEarth(x1,y,m); drawRuler(m);
+
+    const u=phase(t,this.JT0,this.JT1);
+
+    // straight messengers (ν, γ)
+    const su=phase(t,this.JT0,this.JT0+6);
+    if(su>0){
+      ctx.save(); ctx.setLineDash([5,6]);
+      ctx.strokeStyle='rgba(140,255,190,'+(0.6*m).toFixed(3)+')'; ctx.lineWidth=1.2;
+      ctx.beginPath(); ctx.moveTo(x0+14,y-4); ctx.lineTo(lerp(x0+14,x1-16,su),y-4); ctx.stroke();
+      ctx.setLineDash([]); ctx.restore();
+      label('ν, γ — travel straight, point back to the source',lerp(x0,x1,0.42),y-16,0.75*m*ease(phase(t,3,4.5)),'rgba(140,255,190,0.9)','center');
+    }
+
+    // charged trajectories
+    this.trajs.forEach((tr,ti)=>{
+      const n=Math.floor(tr.path.length*u);
+      if(n<2) return;
+      ctx.save(); ctx.globalCompositeOperation='lighter';
+      ctx.strokeStyle=tr.col;
+      ctx.globalAlpha=0.75*m;
+      ctx.lineWidth=1.5;
+      ctx.beginPath();
+      for(let i=0;i<n;i++){ const p=tr.path[i]; i===0?ctx.moveTo(p[0],p[1]):ctx.lineTo(p[0],p[1]); }
+      ctx.stroke();
+      const hp=tr.path[Math.min(n,tr.path.length-1)];
+      glow(hp[0],hp[1],9,'rgba(230,245,255,$)',0.7*m);
+      if(u<1) label(tr.name,hp[0]+12,hp[1]-10+ti*3,0.8*m,tr.col);
+      if(n>=tr.path.length-1) this.arr.add(ti);
+      ctx.restore();
+    });
+
+    label('δθ ≈ few° × Z × (10²⁰ eV / E)',lerp(x0,x1,0.5),H*0.80,0.8*m*ease(phase(t,7,9)),'rgba(255,220,160,0.95)','center');
+    label('time delay Δt ~ 10³–10⁵ yr',lerp(x0,x1,0.5),H*0.80+18,0.65*m*ease(phase(t,9,11)),'rgba(230,200,160,0.85)','center');
+
+    // arrival sky-map inset
+    const bx=W-198,by=H-206,bw=160,bh2=160;
+    ctx.save(); ctx.globalAlpha=m*ease(phase(t,4,6));
+    ctx.fillStyle='rgba(2,10,22,0.8)'; ctx.fillRect(bx,by,bw,bh2);
+    ctx.strokeStyle='rgba(80,140,220,0.4)'; ctx.strokeRect(bx,by,bw,bh2);
+    mono(9,'bold'); ctx.fillStyle='rgba(130,185,255,0.9)'; ctx.textAlign='left';
+    ctx.fillText('ARRIVAL SKY MAP',bx+9,by+15);
+    const cx2=bx+bw/2, cy2=by+bh2/2+8;
+    ctx.strokeStyle='rgba(90,130,190,0.4)';
+    [22,44].forEach(rr=>{ctx.beginPath();ctx.arc(cx2,cy2,rr,0,TAU);ctx.stroke();});
+    // true source (nu/gamma) position
+    ctx.fillStyle='rgba(140,255,190,0.95)';
+    ctx.beginPath(); ctx.arc(cx2,cy2,3,0,TAU); ctx.fill();
+    mono(8); ctx.fillStyle='rgba(140,255,190,0.85)';
+    ctx.fillText('ν/γ = source',cx2+8,cy2+3);
+    // deflected CR arrivals
+    this.trajs.forEach((tr,ti)=>{
+      if(!this.arr.has(ti)) return;
+      const rr=6+tr.defl*0.5, aa=ti*2.1+0.7;
+      ctx.fillStyle=tr.col;
+      ctx.beginPath(); ctx.arc(cx2+Math.cos(aa)*rr,cy2+Math.sin(aa)*rr,3,0,TAU); ctx.fill();
+    });
+    ctx.restore();
+  },
+};
+
+// ════════════ Scene manager ════════════
+const scenes=[gzk,photo,mag];
+let cur=0,sceneT0=0,elapsed=0,prevTs=null;
+const infoEl=document.getElementById('info');
+const btns=[...document.querySelectorAll('#picker button')];
+function switchTo(i){
+  cur=i; sceneT0=elapsed; secs=[];
+  scenes[cur].init();
+  infoEl.innerHTML=scenes[cur].info;
+  btns.forEach((b,k)=>b.classList.toggle('on',k===cur));
+}
+btns.forEach(b=>b.addEventListener('click',()=>switchTo(+b.dataset.i)));
+
+function buildStars(){
+  stars=Array.from({length:Math.floor(W*H/5200)},()=>({
+    x:Math.random()*W,y:Math.random()*H,r:rand(0.3,1.2),ph:rand(0,TAU),sp:rand(0.5,2),
+  }));
+}
+function frame(ts){
+  if(prevTs===null) prevTs=ts;
+  const dt=Math.min(0.05,(ts-prevTs)/1000); prevTs=ts;
+  elapsed+=dt;
+  const t=elapsed-sceneT0;
+  if(t>scenes[cur].dur) switchTo((cur+1)%scenes.length);
+  const m=ease(phase(t,0,1))*(1-ease(phase(t,scenes[cur].dur-1.3,scenes[cur].dur)));
+
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  ctx.fillStyle='#010208'; ctx.fillRect(0,0,W,H);
+  stars.forEach(s=>{
+    const a=0.20+0.28*Math.sin(s.ph+elapsed*s.sp);
+    ctx.fillStyle='rgba(220,235,255,'+a.toFixed(3)+')';
+    ctx.beginPath(); ctx.arc(s.x,s.y,s.r,0,TAU); ctx.fill();
+  });
+
+  scenes[cur].draw(t,dt,m);
+  drawSecs(dt,m);
+  infoEl.style.opacity=m;
+  requestAnimationFrame(frame);
+}
+function init(){
+  dpr=Math.min(2,window.devicePixelRatio||1);
+  W=innerWidth; H=innerHeight;
+  canvas.width=W*dpr; canvas.height=H*dpr;
+  canvas.style.width=W+'px'; canvas.style.height=H+'px';
+  buildStars();
+  scenes[cur].init();
+}
+let rsz;
+addEventListener('resize',()=>{clearTimeout(rsz);rsz=setTimeout(init,150);});
+init();
+switchTo(0);
+requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

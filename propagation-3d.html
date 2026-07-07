@@ -1,0 +1,581 @@
+---
+layout: null
+permalink: /propagation-3d/
+---
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>UHECR Propagation in 3D — GZK, Photodisintegration, Deflection | uhecrs.com</title>
+  <meta name="description" content="Interactive 3D visualizations of ultra-high-energy cosmic-ray propagation: GZK energy losses on the CMB, nuclear photodisintegration, and magnetic deflection through the cosmic web.">
+  <link rel="canonical" href="https://uhecrs.com/propagation-3d/">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { height: 100%; }
+    body { background: #000; overflow: hidden; font-family: 'Helvetica Neue', Arial, sans-serif; }
+    canvas { display: block; }
+    #overlay { position: fixed; inset: 0; pointer-events: none; }
+    #head { position: absolute; top: 20px; left: 50%; transform: translateX(-50%); text-align: center; }
+    #head h1 {
+      font-size: clamp(1.2rem, 3vw, 2rem); font-weight: 100;
+      letter-spacing: 0.5em; margin-right: -0.5em; color: #fff;
+      text-shadow: 0 0 34px rgba(80,160,255,0.9);
+    }
+    #head p {
+      font-size: clamp(0.55rem, 1.1vw, 0.72rem); color: rgba(150,205,255,0.65);
+      letter-spacing: 0.3em; margin-right: -0.3em; text-transform: uppercase; margin-top: 6px;
+    }
+    #back, #to2d {
+      position: absolute; top: 22px; pointer-events: auto;
+      color: rgba(155,205,255,0.8); text-decoration: none;
+      font-size: 0.7rem; letter-spacing: 0.14em; text-transform: uppercase;
+      border: 1px solid rgba(100,160,230,0.28); border-radius: 3px;
+      padding: 6px 12px; background: rgba(4,12,26,0.5);
+    }
+    #back { left: 20px; }
+    #to2d { right: 20px; }
+    #back:hover, #to2d:hover { color: #fff; border-color: rgba(160,210,255,0.7); }
+    #picker {
+      position: absolute; top: 108px; left: 50%; transform: translateX(-50%);
+      display: flex; gap: 10px; pointer-events: auto; flex-wrap: wrap; justify-content: center;
+    }
+    #picker button {
+      font-family: inherit; cursor: pointer;
+      color: rgba(155,205,255,0.75); background: rgba(4,12,26,0.5);
+      border: 1px solid rgba(100,160,230,0.28); border-radius: 3px;
+      font-size: clamp(0.55rem, 1vw, 0.7rem); letter-spacing: 0.15em;
+      text-transform: uppercase; padding: 7px 15px; transition: all 0.25s;
+    }
+    #picker button:hover { color: #fff; }
+    #picker button.on {
+      color: #fff; border-color: rgba(160,210,255,0.85);
+      background: rgba(30,70,140,0.55);
+      box-shadow: 0 0 18px rgba(80,160,255,0.35);
+    }
+    #info {
+      position: absolute; left: 16px; bottom: 16px; pointer-events: auto;
+      font-family: 'Courier New', monospace;
+      font-size: 11px; line-height: 17px;
+      color: rgba(160,215,255,0.9);
+      background: rgba(2,12,24,0.6);
+      border: 1px solid rgba(80,150,220,0.35);
+      padding: 11px 15px; max-width: 330px;
+      white-space: pre-wrap;
+    }
+    #info .t { color: #fff; font-weight: bold; }
+    #info .d { color: rgba(120,170,225,0.75); }
+    #info a { color: #7db8ff; }
+    #info a:hover { color: #fff; }
+    #hint {
+      position: absolute; bottom: 16px; right: 20px;
+      font-size: 0.6rem; letter-spacing: 0.16em; text-transform: uppercase;
+      color: rgba(120,180,255,0.4); text-align: right;
+    }
+    @media (max-width: 640px) { #info { font-size: 9px; line-height: 14px; max-width: 240px; } }
+  </style>
+</head>
+<body>
+<div id="overlay">
+  <a id="back" href="/">&#8592; uhecrs.com</a>
+  <a id="to2d" href="/propagation/">2D version &#8594;</a>
+  <div id="head">
+    <h1>PROPAGATION</h1>
+    <p>From source to Earth &mdash; 3D</p>
+  </div>
+  <div id="picker">
+    <button data-i="0">GZK — energy losses</button>
+    <button data-i="1">Photodisintegration</button>
+    <button data-i="2">Magnetic deflection</button>
+  </div>
+  <div id="info"></div>
+  <div id="hint">drag to orbit &middot; scroll to zoom</div>
+</div>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+const clamp=(v,a,b)=>v<a?a:v>b?b:v;
+const phase=(t,a,b)=>clamp((t-a)/(b-a),0,1);
+const ease=t=>t<0.5?2*t*t:-1+(4-2*t)*t;
+const rand=(a,b)=>a+Math.random()*(b-a);
+const gauss=()=>(Math.random()+Math.random()+Math.random()-1.5)/1.5;
+const TAU=Math.PI*2;
+
+const renderer=new THREE.WebGLRenderer({antialias:true});
+renderer.setPixelRatio(Math.min(2,devicePixelRatio||1));
+renderer.setSize(innerWidth,innerHeight);
+document.body.appendChild(renderer.domElement);
+const scene=new THREE.Scene();
+scene.background=new THREE.Color(0x010208);
+const camera=new THREE.PerspectiveCamera(50,innerWidth/innerHeight,0.5,20000);
+camera.position.set(60,260,760);
+const controls=new OrbitControls(camera,renderer.domElement);
+controls.enableDamping=true; controls.dampingFactor=0.06;
+controls.autoRotate=true; controls.autoRotateSpeed=0.25;
+controls.minDistance=150; controls.maxDistance=3500;
+scene.add(new THREE.HemisphereLight(0x304a70,0x0a0a14,0.8));
+
+// starfield
+{
+  const n=2000,pos=new Float32Array(n*3);
+  for(let i=0;i<n;i++){
+    const v=new THREE.Vector3().randomDirection().multiplyScalar(9000);
+    pos.set([v.x,v.y,v.z],i*3);
+  }
+  const g=new THREE.BufferGeometry();
+  g.setAttribute('position',new THREE.BufferAttribute(pos,3));
+  scene.add(new THREE.Points(g,new THREE.PointsMaterial({
+    color:0xbfd4ff,size:2,sizeAttenuation:false,transparent:true,opacity:0.75})));
+}
+
+function glowTexture(){
+  const c=document.createElement('canvas'); c.width=c.height=64;
+  const g=c.getContext('2d');
+  const gr=g.createRadialGradient(32,32,0,32,32,32);
+  gr.addColorStop(0,'rgba(255,255,255,1)');
+  gr.addColorStop(0.3,'rgba(255,255,255,0.5)');
+  gr.addColorStop(1,'rgba(255,255,255,0)');
+  g.fillStyle=gr; g.fillRect(0,0,64,64);
+  return new THREE.CanvasTexture(c);
+}
+const glowTex=glowTexture();
+const spr=(color,op)=>new THREE.Sprite(new THREE.SpriteMaterial({
+  map:glowTex,color,transparent:true,opacity:op,
+  blending:THREE.AdditiveBlending,depthWrite:false}));
+
+function makeTextSprite(text,scl){
+  const c=document.createElement('canvas'); c.width=512; c.height=64;
+  const g=c.getContext('2d');
+  g.font='bold 28px "Courier New", monospace';
+  g.textAlign='center'; g.fillStyle='rgba(170,210,255,0.95)';
+  g.fillText(text,256,42);
+  const s=new THREE.Sprite(new THREE.SpriteMaterial({
+    map:new THREE.CanvasTexture(c),transparent:true,opacity:0.85,depthWrite:false}));
+  s.scale.set(240*(scl||1),30*(scl||1),1);
+  return s;
+}
+function dynText(scl,color){
+  const c=document.createElement('canvas'); c.width=512; c.height=64;
+  const g=c.getContext('2d');
+  const tex=new THREE.CanvasTexture(c);
+  const s=new THREE.Sprite(new THREE.SpriteMaterial({map:tex,transparent:true,depthWrite:false}));
+  s.scale.set(240*(scl||1),30*(scl||1),1);
+  s.userData.set=txt=>{
+    g.clearRect(0,0,512,64);
+    g.font='bold 28px "Courier New", monospace';
+    g.textAlign='center'; g.fillStyle=color||'rgba(255,240,200,0.95)';
+    g.fillText(txt,256,42);
+    tex.needsUpdate=true;
+  };
+  return s;
+}
+
+const X0=-520, X1=520;          // source → Earth span
+function makeEndpoints(g){
+  const src=spr(0xffdcaa,0.6); src.position.set(X0,0,0); src.scale.setScalar(70); g.add(src);
+  const sl=makeTextSprite('SOURCE',0.8); sl.position.set(X0,-52,0); g.add(sl);
+  const earth=new THREE.Mesh(new THREE.SphereGeometry(12,24,16),
+    new THREE.MeshBasicMaterial({color:0x3a7ad8}));
+  earth.position.set(X1,0,0); g.add(earth);
+  const eg=spr(0x78b9ff,0.4); eg.position.set(X1,0,0); eg.scale.setScalar(60); g.add(eg);
+  const el2=makeTextSprite('EARTH',0.8); el2.position.set(X1,-46,0); g.add(el2);
+}
+function makeBathPoints(g,n,color,box){
+  const pos=new Float32Array(n*3);
+  for(let i=0;i<n;i++){
+    pos[i*3]=rand(X0-60,X1+60); pos[i*3+1]=rand(-box,box); pos[i*3+2]=rand(-box,box);
+  }
+  const geo=new THREE.BufferGeometry();
+  geo.setAttribute('position',new THREE.BufferAttribute(pos,3));
+  const pts=new THREE.Points(geo,new THREE.PointsMaterial({
+    color,size:3,transparent:true,opacity:0.35,
+    blending:THREE.AdditiveBlending,depthWrite:false}));
+  g.add(pts);
+  return pts;
+}
+
+// escaping secondaries pool
+const ESC_COL={nu:0x8cffbe,ga:0xff9aff};
+const escPool=Array.from({length:12},()=>{
+  const head=spr(0xffffff,0);
+  const lineG=new THREE.BufferGeometry();
+  lineG.setAttribute('position',new THREE.BufferAttribute(new Float32Array(6),3));
+  const line=new THREE.Line(lineG,new THREE.LineBasicMaterial({
+    color:0xffffff,transparent:true,opacity:0,
+    blending:THREE.AdditiveBlending,depthWrite:false}));
+  scene.add(head); scene.add(line);
+  return {head,line,active:false,age:0,life:1.6,o:new THREE.Vector3(),d:new THREE.Vector3()};
+});
+function spawnSec(origin,type){
+  const e=escPool.find(e=>!e.active);
+  if(!e) return;
+  e.active=true; e.age=0;
+  e.o.copy(origin);
+  e.d.set(rand(0.2,0.7),gauss(),gauss()).normalize();
+  e.head.material.color.setHex(ESC_COL[type]);
+  e.line.material.color.setHex(ESC_COL[type]);
+  e.head.scale.setScalar(14);
+}
+function updateSecs(dt,m){
+  escPool.forEach(e=>{
+    if(!e.active){e.head.material.opacity=0;e.line.material.opacity=0;return;}
+    e.age+=dt;
+    if(e.age>e.life){e.active=false;return;}
+    const a=(1-e.age/e.life)*m;
+    const d=e.age*340;
+    const h=e.o.clone().addScaledVector(e.d,d);
+    const tl=e.o.clone().addScaledVector(e.d,Math.max(0,d-90));
+    e.head.position.copy(h);
+    e.head.material.opacity=a*0.6;
+    const p=e.line.geometry.attributes.position.array;
+    p[0]=tl.x;p[1]=tl.y;p[2]=tl.z;p[3]=h.x;p[4]=h.y;p[5]=h.z;
+    e.line.geometry.attributes.position.needsUpdate=true;
+    e.line.material.opacity=a*0.45;
+  });
+}
+
+// ════════════ SCENE 1: GZK ════════════
+const gzk={
+  dur:26, JT0:1.5, JT1:21,
+  info:'<span class="t">GZK EFFECT — PHOTOPION PRODUCTION</span>\n'+
+       'p + γ_CMB → Δ⁺ → p π⁰ / n π⁺\n'+
+       'threshold E ≈ 5×10¹⁹ eV · Δloss ≈ 20% per int.\n'+
+       'loss length ~ 20 Mpc → horizon ~ 100–200 Mpc\n'+
+       '<span class="d">Also e⁺e⁻ pair production (gentler).\nπ decay → cosmogenic ν and γ.</span>\n'+
+       '<a href="/propagation/processes/">read more →</a>',
+  group:new THREE.Group(),
+  build(){
+    const g=this.group;
+    makeEndpoints(g);
+    this.bath=makeBathPoints(g,1300,0xff9070,220);
+    const bl=makeTextSprite('CMB PHOTON BATH — 411 γ/cm³',1.0);
+    bl.position.set(0,190,0); g.add(bl);
+    this.head=spr(0xffffff,0); this.head.scale.setScalar(30); g.add(this.head);
+    this.flash=spr(0xfff8e0,0); g.add(this.flash);
+    this.eLabel=dynText(1.0); g.add(this.eLabel);
+    // trail
+    this.NT=60;
+    this.trailG=new THREE.BufferGeometry();
+    this.trailG.setAttribute('position',new THREE.BufferAttribute(new Float32Array(this.NT*3),3));
+    g.add(new THREE.Line(this.trailG,new THREE.LineBasicMaterial({
+      color:0x9cc8ff,transparent:true,opacity:0.5,
+      blending:THREE.AdditiveBlending,depthWrite:false})));
+  },
+  reset(){
+    this.events=[]; let E=Math.pow(10,20.6), u=0;
+    while(u<1){
+      if(E>5e19){ u+=rand(0.07,0.13); if(u>=1)break; E*=rand(0.75,0.82); this.events.push({u,E,pion:true}); }
+      else { u+=0.05; E*=0.985; if(u<1) this.events.push({u,E,pion:false}); }
+    }
+    this.done=new Set(); this.flashAge=9;
+    this.trailPts=[];
+  },
+  pos(u){ return new THREE.Vector3(lerp(X0+18,X1-16,u),Math.sin(u*9)*24,Math.cos(u*6)*18); },
+  update(t,dt,m,el){
+    const u=phase(t,this.JT0,this.JT1);
+    const p=this.pos(u);
+    this.head.position.copy(p);
+    this.head.material.opacity=(u>0&&u<1?0.9:0)*m;
+    let E=Math.pow(10,20.6);
+    this.events.forEach((e,i)=>{
+      if(e.u<=u){
+        E=e.E;
+        if(!this.done.has(i)){
+          this.done.add(i);
+          if(e.pion){
+            this.flash.position.copy(this.pos(e.u));
+            this.flashAge=0;
+            spawnSec(this.pos(e.u),'nu');
+            spawnSec(this.pos(e.u),'ga');
+          }
+        }
+      }
+    });
+    this.flashAge+=dt;
+    this.flash.scale.setScalar(60);
+    this.flash.material.opacity=this.flashAge<0.6?(1-this.flashAge/0.6)*0.95*m:0;
+    this.eLabel.position.copy(p).add(new THREE.Vector3(0,44,0));
+    this.eLabel.userData.set(u>0&&u<1?'p   E = 10^'+Math.log10(E).toFixed(1)+' eV':'');
+    this.eLabel.material.opacity=0.9*m;
+    // trail
+    if(u>0&&u<1){ this.trailPts.push(p.clone()); if(this.trailPts.length>this.NT) this.trailPts.shift(); }
+    else this.trailPts=[];
+    const tp=this.trailG.attributes.position.array;
+    for(let i=0;i<this.NT;i++){
+      const q=this.trailPts[i]||p;
+      tp[i*3]=q.x;tp[i*3+1]=q.y;tp[i*3+2]=q.z;
+    }
+    this.trailG.attributes.position.needsUpdate=true;
+    this.bath.rotation.x=el*0.01;
+  },
+};
+
+// ════════════ SCENE 2: PHOTODISINTEGRATION ════════════
+const photo={
+  dur:26, JT0:1.5, JT1:21,
+  info:'<span class="t">PHOTODISINTEGRATION OF NUCLEI</span>\n'+
+       'A + γ_CMB/EBL → (A−1) + n, (A−2) + 2n, …\n'+
+       'giant dipole resonance: ε′ ≈ 10–30 MeV\n'+
+       'E/A roughly conserved → rigidity survives\n'+
+       '<span class="d">Iron and protons travel farthest;\nintermediate nuclei are fragile.</span>\n'+
+       '<a href="/propagation/processes/">read more →</a>',
+  group:new THREE.Group(),
+  build(){
+    const g=this.group;
+    makeEndpoints(g);
+    this.bath=makeBathPoints(g,900,0xff9070,220);
+    this.ebl=makeBathPoints(g,500,0xffc060,260);
+    const bl=makeTextSprite('CMB + EBL (INFRARED) PHOTONS',1.0);
+    bl.position.set(0,190,0); g.add(bl);
+    // nucleus
+    this.nuc=new THREE.Group(); g.add(this.nuc);
+    const geoN=new THREE.SphereGeometry(4.5,12,8);
+    this.nucleons=[];
+    for(let i=0;i<26;i++){
+      const isP=Math.random()<0.46;
+      const mat=new THREE.MeshBasicMaterial({color:isP?0xff8878:0xa0b8dc,transparent:true,opacity:1});
+      const mesh=new THREE.Mesh(geoN,mat);
+      const v=new THREE.Vector3().randomDirection().multiplyScalar(Math.cbrt(Math.random())*13);
+      mesh.position.copy(v);
+      this.nuc.add(mesh);
+      this.nucleons.push({mesh,home:v.clone(),gone:false,vel:new THREE.Vector3(),age:0});
+    }
+    this.nGlow=spr(0xffdcaa,0.4); this.nGlow.scale.setScalar(80); this.nuc.add(this.nGlow);
+    this.aLabel=dynText(1.0); g.add(this.aLabel);
+    this.photon=spr(0xffc060,0); this.photon.scale.setScalar(22); g.add(this.photon);
+    this.flash=spr(0xfff8e0,0); g.add(this.flash);
+  },
+  reset(){
+    this.events=[]; let u=0.12, A=56;
+    while(u<0.95&&A>30){ const n=1+(Math.random()<0.3?1:0); A-=n; this.events.push({u,n,A}); u+=rand(0.09,0.16); }
+    this.done=new Set(); this.shake=0; this.flashAge=9;
+    this.nucleons.forEach(nc=>{
+      nc.gone=false; nc.age=0;
+      nc.mesh.position.copy(nc.home);
+      nc.mesh.material.opacity=1;
+      nc.mesh.parent!==this.nuc&&this.nuc.add(nc.mesh);
+    });
+  },
+  pos(u){ return new THREE.Vector3(lerp(X0+20,X1-18,u),Math.sin(u*7)*20,Math.cos(u*5)*14); },
+  update(t,dt,m,el){
+    const u=phase(t,this.JT0,this.JT1);
+    const p=this.pos(u);
+    this.nuc.position.copy(p);
+    this.nuc.visible=u>0&&u<1;
+    this.shake=Math.max(0,this.shake-dt*2.2);
+    let A=56;
+    this.events.forEach((e,i)=>{
+      if(e.u<=u){
+        A=e.A;
+        if(!this.done.has(i)){
+          this.done.add(i);
+          this.shake=1; this.flashAge=0;
+          this.flash.position.copy(p);
+          let ej=0;
+          this.nucleons.forEach(nc=>{
+            if(!nc.gone&&ej<e.n&&nc.home.length()>7){
+              nc.gone=true; ej++;
+              // reparent into the scene group (world coords; group sits at origin)
+              this.group.add(nc.mesh);
+              nc.mesh.position.copy(p).add(nc.home);
+              nc.vel=new THREE.Vector3().randomDirection().multiplyScalar(rand(60,110));
+              nc.age=0;
+            }
+          });
+        }
+      }
+      // incoming photon
+      if(u>e.u-0.035&&u<e.u){
+        const pr=phase(u,e.u-0.035,e.u);
+        const from=this.pos(e.u).add(new THREE.Vector3(0,120*(1-pr)*(this.events.indexOf(e)%2?1:-1),60*(1-pr)));
+        this.photon.position.copy(from);
+        this.photon.material.opacity=0.85*m;
+      }
+    });
+    if(!this.events.some(e=>u>e.u-0.035&&u<e.u)) this.photon.material.opacity=0;
+    this.flashAge+=dt;
+    this.flash.scale.setScalar(64);
+    this.flash.material.opacity=this.flashAge<0.5?(1-this.flashAge/0.5)*0.9*m:0;
+    // nucleon jiggle + ejected motion
+    this.nucleons.forEach(nc=>{
+      if(nc.gone){
+        nc.age+=dt;
+        nc.mesh.position.addScaledVector(nc.vel,dt);
+        nc.mesh.material.opacity=clamp(1-nc.age/2.2,0,1)*m;
+      } else {
+        nc.mesh.position.copy(nc.home).add(
+          new THREE.Vector3(gauss(),gauss(),gauss()).multiplyScalar(this.shake*3+0.5));
+        nc.mesh.material.opacity=m;
+      }
+    });
+    this.nGlow.material.opacity=0.4*m;
+    this.aLabel.position.copy(p).add(new THREE.Vector3(0,48,0));
+    this.aLabel.userData.set(u>0&&u<1?'A = '+A+'   (⁵⁶Fe → …)   E/A ≈ const':'');
+    this.aLabel.material.opacity=0.9*m;
+  },
+};
+
+// ════════════ SCENE 3: MAGNETIC DEFLECTION ════════════
+const mag={
+  dur:28, JT0:1.5, JT1:21,
+  info:'<span class="t">MAGNETIC DEFLECTION & TIME DELAY</span>\n'+
+       'voids: B ≲ 1 nG · filaments/clusters: 10–100 nG\n'+
+       'Galactic field: B ~ few µG\n'+
+       'δθ ≈ few° × Z × (E/10²⁰ eV)⁻¹\n'+
+       '<span class="d">ν and γ travel straight; charged CRs\nrandom-walk through the cosmic web.\nTime delays 10³–10⁵ yr hide transients.</span>\n'+
+       '<a href="/propagation/processes/">read more →</a>',
+  group:new THREE.Group(),
+  build(){
+    const g=this.group;
+    makeEndpoints(g);
+    // cosmic web: filament point clouds along random splines
+    this.filPts=[];
+    const web=new Float32Array(6*420*3);
+    let w=0;
+    for(let f=0;f<6;f++){
+      const ctrl=[];
+      for(let k=0;k<=5;k++) ctrl.push(new THREE.Vector3(
+        lerp(X0-40,X1+40,k/5), gauss()*160, gauss()*160));
+      const curve=new THREE.CatmullRomCurve3(ctrl);
+      for(let i=0;i<420;i++){
+        const p=curve.getPoint(Math.random()).add(
+          new THREE.Vector3(gauss(),gauss(),gauss()).multiplyScalar(20));
+        web[w++]=p.x; web[w++]=p.y; web[w++]=p.z;
+        if(i%14===0) this.filPts.push(p);
+      }
+    }
+    const webG=new THREE.BufferGeometry();
+    webG.setAttribute('position',new THREE.BufferAttribute(web,3));
+    g.add(new THREE.Points(webG,new THREE.PointsMaterial({
+      color:0x7080d8,size:2.5,transparent:true,opacity:0.35,
+      blending:THREE.AdditiveBlending,depthWrite:false})));
+    // cluster glows
+    for(let i=0;i<5;i++){
+      const p=this.filPts[Math.floor(Math.random()*this.filPts.length)];
+      const s=spr(0x9aa4ff,0.22); s.position.copy(p); s.scale.setScalar(rand(70,130)); g.add(s);
+    }
+    const lf=makeTextSprite('FILAMENTS — B ~ 10–100 nG',0.95); lf.position.set(-140,230,0); g.add(lf);
+    const lv=makeTextSprite('VOIDS — B ≲ 1 nG',0.85); lv.position.set(200,-210,0); g.add(lv);
+    // trajectories
+    this.trajs=[
+      {name:'p  10²⁰·⁵ eV',col:0xb4e1ff,R:16},
+      {name:'p  10¹⁹·⁵ eV',col:0x78b4ff,R:4},
+      {name:'Fe 10²⁰ eV (Z=26)',col:0xffb478,R:1.1},
+    ];
+    this.trajs.forEach(tr=>{
+      tr.geo=new THREE.BufferGeometry();
+      tr.geo.setAttribute('position',new THREE.BufferAttribute(new Float32Array(200*3),3));
+      tr.line=new THREE.Line(tr.geo,new THREE.LineBasicMaterial({
+        color:tr.col,transparent:true,opacity:0.85,
+        blending:THREE.AdditiveBlending,depthWrite:false}));
+      g.add(tr.line);
+      tr.head=spr(tr.col,0.9); tr.head.scale.setScalar(22); g.add(tr.head);
+      tr.label=makeTextSprite(tr.name,0.75); g.add(tr.label);
+    });
+    // straight neutrino line
+    const nuG=new THREE.BufferGeometry().setFromPoints(
+      [new THREE.Vector3(X0+16,6,0),new THREE.Vector3(X1-14,6,0)]);
+    this.nuLine=new THREE.Line(nuG,new THREE.LineDashedMaterial({
+      color:0x8cffbe,dashSize:9,gapSize:9,transparent:true,opacity:0.7}));
+    this.nuLine.computeLineDistances();
+    g.add(this.nuLine);
+    const ln=makeTextSprite('ν, γ — STRAIGHT TO THE SOURCE',0.9);
+    ln.position.set(0,36,0); g.add(ln);
+  },
+  reset(){
+    // simulate 3D random-walk paths, stronger turning near filaments, ∝ 1/R
+    this.trajs.forEach(tr=>{
+      const path=[];
+      let p=new THREE.Vector3(X0+16,0,0);
+      let dir=new THREE.Vector3(1,gauss()*0.05,gauss()*0.05).normalize();
+      path.push(p.clone());
+      let guard=0;
+      while(p.x<X1-16&&path.length<200&&guard++<400){
+        let dmin=1e9;
+        this.filPts.forEach(fp=>{const d=p.distanceToSquared(fp);if(d<dmin)dmin=d;});
+        dmin=Math.sqrt(dmin);
+        const amp=(dmin<60?0.5:dmin<130?0.2:0.06)/tr.R;
+        dir.x+=0.06; // keep heading to Earth
+        dir.y+=gauss()*amp-(p.y)*0.0009;
+        dir.z+=gauss()*amp-(p.z)*0.0009;
+        dir.normalize();
+        p=p.clone().addScaledVector(dir,14);
+        path.push(p.clone());
+      }
+      tr.path=path;
+      const arr=tr.geo.attributes.position.array;
+      for(let i=0;i<200;i++){
+        const q=path[Math.min(i,path.length-1)];
+        arr[i*3]=q.x;arr[i*3+1]=q.y;arr[i*3+2]=q.z;
+      }
+      tr.geo.attributes.position.needsUpdate=true;
+      tr.geo.setDrawRange(0,1);
+    });
+  },
+  update(t,dt,m,el){
+    const u=phase(t,this.JT0,this.JT1);
+    this.nuLine.material.opacity=0.7*ease(phase(t,2,4))*m;
+    this.trajs.forEach(tr=>{
+      const n=Math.max(1,Math.floor(tr.path.length*u));
+      tr.geo.setDrawRange(0,n);
+      tr.line.material.opacity=0.85*m;
+      const hp=tr.path[Math.min(n,tr.path.length-1)];
+      tr.head.position.copy(hp);
+      tr.head.material.opacity=(u<1?0.9:0.3)*m;
+      tr.label.position.copy(hp).add(new THREE.Vector3(0,26,0));
+      tr.label.material.opacity=0.8*m;
+    });
+  },
+};
+
+// ════════════ Scene manager ════════════
+const scenes=[gzk,photo,mag];
+scenes.forEach(s=>{s.build();s.reset();s.group.visible=false;scene.add(s.group);});
+const infoEl=document.getElementById('info');
+const btns=[...document.querySelectorAll('#picker button')];
+let cur=0,sceneT0=0;
+const clock=new THREE.Clock();
+function switchTo(i){
+  scenes[cur].group.visible=false;
+  cur=i; sceneT0=clock.getElapsedTime();
+  scenes[cur].reset();
+  scenes[cur].group.visible=true;
+  infoEl.innerHTML=scenes[cur].info;
+  btns.forEach((b,k)=>b.classList.toggle('on',k===cur));
+  escPool.forEach(e=>e.active=false);
+}
+btns.forEach(b=>b.addEventListener('click',()=>switchTo(+b.dataset.i)));
+let prevT=0;
+function animate(){
+  requestAnimationFrame(animate);
+  const el=clock.getElapsedTime();
+  const dt=Math.min(0.05,el-prevT); prevT=el;
+  let t=el-sceneT0;
+  if(t>scenes[cur].dur){ switchTo((cur+1)%scenes.length); t=0; }
+  const m=ease(phase(t,0,1))*(1-ease(phase(t,scenes[cur].dur-1.3,scenes[cur].dur)));
+  scenes[cur].update(t,dt,m,el);
+  updateSecs(dt,m);
+  infoEl.style.opacity=m;
+  controls.update();
+  renderer.render(scene,camera);
+}
+switchTo(0);
+animate();
+addEventListener('resize',()=>{
+  camera.aspect=innerWidth/innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth,innerHeight);
+});
+</script>
+</body>
+</html>
